@@ -741,16 +741,21 @@ def _crop_has_ink(crop_bgr):
 
 
 def _consistent_tl_mark_bbox(slides, zone, cv2_mod, np_mod):
-    """OCR-free wordmark detector: scan the top-left zone across every slide
-    and find the bbox of pixels that are (a) low-variance across slides and
-    (b) darker than the surrounding background. Works because PPTX decks
-    generated from the same template have the wordmark in pixel-identical
-    position on every slide.
+    """OCR-free wordmark detector: take the per-pixel median image across
+    every slide's top-left zone, threshold for darkness, dilate to merge
+    letter strokes into a single blob, then return the bbox of the largest
+    connected component.
 
-    Returns a single (x1, y1, x2, y2) bbox in image coords of the FIRST
-    slide's coordinate system, or None if no consistent dark region exists."""
+    Why the median: the wordmark is dark on (almost) every slide while
+    surrounding pixels vary. The median across slides keeps the wordmark
+    dark and pushes everything else toward the background brightness. This
+    is robust to anti-aliasing jitter and JPG compression noise — the
+    std/mean approach we tried first was too tight and missed real
+    wordmarks rendered through LibreOffice.
+
+    Returns (x1, y1, x2, y2) in absolute pixel coords of the first slide,
+    or None if no consistent dark blob exists."""
     zx, zy, zw, zh = zone
-    # Sample up to 8 slides spread across the deck for the variance map.
     n = len(slides)
     if n < 2:
         return None
@@ -759,8 +764,8 @@ def _consistent_tl_mark_bbox(slides, zone, cv2_mod, np_mod):
         step = max(1, n // 8)
         idxs = idxs[::step][:8]
 
-    crops = []
-    ref_shape = None
+    grays = []
+    ref_shape = None  # (width, height) of the first crop
     for i in idxs:
         img = cv2_mod.imread(str(slides[i]))
         if img is None:
@@ -771,36 +776,41 @@ def _consistent_tl_mark_bbox(slides, zone, cv2_mod, np_mod):
         crop = img[cy1:cy2, cx1:cx2]
         if crop.size == 0:
             continue
+        gray = cv2_mod.cvtColor(crop, cv2_mod.COLOR_BGR2GRAY)
         if ref_shape is None:
-            ref_shape = (crop.shape[1], crop.shape[0])
-        elif (crop.shape[1], crop.shape[0]) != ref_shape:
-            crop = cv2_mod.resize(crop, ref_shape)
-        crops.append(crop)
-    if len(crops) < 2:
+            ref_shape = (gray.shape[1], gray.shape[0])
+        elif (gray.shape[1], gray.shape[0]) != ref_shape:
+            gray = cv2_mod.resize(gray, ref_shape)
+        grays.append(gray)
+    if len(grays) < 2:
         return None
 
-    stack = np_mod.stack([cv2_mod.cvtColor(c, cv2_mod.COLOR_BGR2GRAY) for c in crops]).astype(np_mod.float32)
-    # Per-pixel std across slides. Low std → identical across slides.
-    std  = stack.std(axis=0)
-    mean = stack.mean(axis=0)
-    # Mask: identical across slides AND meaningfully darker than slide bg.
-    # Threshold: pixel is "ink" if mean brightness < 180 (out of 255) and
-    # cross-slide std < 6 (very tight identical-across-slides match).
-    mask = ((std < 6.0) & (mean < 180.0)).astype(np_mod.uint8) * 255
-    # Morph clean-up to merge letter strokes into a solid blob.
-    k = max(2, ref_shape[0] // 80)
+    median = np_mod.median(np_mod.stack(grays).astype(np_mod.float32), axis=0).astype(np_mod.uint8)
+    mask = (median < 150).astype(np_mod.uint8) * 255
+
+    # Sanity floor: at least some ink must be visible in the median.
+    if int((mask > 0).sum()) < (ref_shape[0] * ref_shape[1] * 0.001):
+        return None
+
+    # Heavy dilation to merge separate letter strokes into one blob.
+    k = max(6, ref_shape[0] // 50)
     kernel = cv2_mod.getStructuringElement(cv2_mod.MORPH_RECT, (k, k))
-    mask = cv2_mod.dilate(mask, kernel, iterations=2)
+    mask_d = cv2_mod.dilate(mask, kernel, iterations=2)
 
-    # Want at least a minimal amount of ink to call this a wordmark.
-    if int((mask > 0).sum()) < (ref_shape[0] * ref_shape[1] * 0.005):
+    n_cc, _labels, stats, _cent = cv2_mod.connectedComponentsWithStats(mask_d, connectivity=8)
+    if n_cc < 2:  # 0 = background, want at least one real component
         return None
+    # Largest non-background component.
+    best = max(range(1, n_cc), key=lambda i: stats[i, cv2_mod.CC_STAT_AREA])
+    x = int(stats[best, cv2_mod.CC_STAT_LEFT])
+    y = int(stats[best, cv2_mod.CC_STAT_TOP])
+    w = int(stats[best, cv2_mod.CC_STAT_WIDTH])
+    h = int(stats[best, cv2_mod.CC_STAT_HEIGHT])
 
-    ys, xs = np_mod.where(mask > 0)
-    if len(xs) == 0:
+    # Reject impossibly tiny or full-zone components — those aren't wordmarks.
+    area_pct = stats[best, cv2_mod.CC_STAT_AREA] / float(ref_shape[0] * ref_shape[1])
+    if area_pct < 0.005 or area_pct > 0.85:
         return None
-    x1, x2 = int(xs.min()), int(xs.max())
-    y1, y2 = int(ys.min()), int(ys.max())
 
     # Translate from crop-local coords to first-slide absolute coords.
     first = cv2_mod.imread(str(slides[idxs[0]]))
@@ -808,13 +818,12 @@ def _consistent_tl_mark_bbox(slides, zone, cv2_mod, np_mod):
         return None
     H, W = first.shape[:2]
     cx1, cy1 = int(zx * W), int(zy * H)
-    # If we resized to ref_shape, scale back to actual crop size on first slide.
     crop_w_act = int((zx + zw) * W) - cx1
     crop_h_act = int((zy + zh) * H) - cy1
     sx = crop_w_act / float(ref_shape[0])
     sy = crop_h_act / float(ref_shape[1])
-    bx1 = cx1 + int(x1 * sx); by1 = cy1 + int(y1 * sy)
-    bx2 = cx1 + int(x2 * sx); by2 = cy1 + int(y2 * sy)
+    bx1 = cx1 + int(x * sx);          by1 = cy1 + int(y * sy)
+    bx2 = cx1 + int((x + w) * sx);    by2 = cy1 + int((y + h) * sy)
     return (bx1, by1, bx2, by2)
 
 
