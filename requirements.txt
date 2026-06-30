@@ -1,0 +1,16 @@
+# SlideCraft Lite — low-RAM build (logo + watermark removal focused)
+# No torch, no onnxruntime, no ffmpeg, no poppler. Total install ~250 MB,
+# cold-start <2s, runs on 4 GB RAM laptops.
+
+flask>=3.0
+python-pptx>=1.0
+Pillow>=10.0
+opencv-python-headless>=4.8
+numpy>=1.24
+PyMuPDF                              # PDF→JPG render + text-layer extract (no external binary)
+qrcode[pil]                          # Insert → Icon (QR overlay)
+
+# Optional — only needed for PPTX→PDF export (PDF→anything works without it):
+#   Windows: winget install TheDocumentFoundation.LibreOffice
+#   Mac:     brew install --cask libreoffice
+#   Linux:   apt install libreoffice

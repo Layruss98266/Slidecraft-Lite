@@ -1,0 +1,1323 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SlideCraft — Slide Editor</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="{{ url_for('static', filename='css/app.css') }}?v=9">
+<link rel="stylesheet" href="{{ url_for('static', filename='css/features.css') }}?v=9">
+</head>
+<body>
+
+<!-- Drag & Drop Overlay -->
+<div class="drop-overlay" id="drop-overlay">
+  <div class="drop-box">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M12 16V4m0 0L8 8m4-4l4 4M4 17v2a2 2 0 002 2h12a2 2 0 002-2v-2"/></svg>
+    <h3>Drop your PPTX file here</h3>
+    <p>Release to upload and process slides</p>
+  </div>
+</div>
+
+<!-- Loading Overlay -->
+<div class="loading-overlay" id="loading-overlay">
+  <div class="loading-spinner"></div>
+  <p id="loading-text">Processing...</p>
+</div>
+
+<!-- Presentation Mode -->
+<div id="presentation-mode">
+  <canvas id="pres-canvas"></canvas>
+</div>
+
+<!-- Context Menu -->
+<div id="context-menu">
+  <button class="ctx-item" onclick="ctxEdit()">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+    Edit
+  </button>
+  <button class="ctx-item" onclick="duplicateSelected()">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>
+    Duplicate
+  </button>
+  <button class="ctx-item" onclick="deleteSelected()">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3,6 5,6 21,6"/><path d="M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2"/></svg>
+    Delete
+  </button>
+  <div class="ctx-sep"></div>
+  <button class="ctx-item" onclick="bringToFront()">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="17,11 12,6 7,11"/><polyline points="17,18 12,13 7,18"/></svg>
+    Bring to Front
+  </button>
+  <button class="ctx-item" onclick="sendToBack()">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="7,13 12,18 17,13"/><polyline points="7,6 12,11 17,6"/></svg>
+    Send to Back
+  </button>
+</div>
+
+<!-- Shortcuts Modal -->
+<div id="shortcuts-modal">
+  <div class="shortcuts-card">
+    <h2>
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="M6 8h.01M10 8h.01M14 8h.01M18 8h.01M8 12h.01M12 12h.01M16 12h.01M7 16h10"/></svg>
+      Keyboard Shortcuts
+    </h2>
+    <div class="sc-category">
+      <h3>Tools</h3>
+      <div class="sc-row"><span>Select tool</span><kbd>S</kbd></div>
+      <div class="sc-row"><span>Text tool</span><kbd>T</kbd></div>
+      <div class="sc-row"><span>Rectangle tool</span><kbd>R</kbd></div>
+      <div class="sc-row"><span>Cover tool</span><kbd>C</kbd></div>
+    </div>
+    <div class="sc-category">
+      <h3>Editing</h3>
+      <div class="sc-row"><span>Undo</span><kbd>Ctrl+Z</kbd></div>
+      <div class="sc-row"><span>Redo</span><kbd>Ctrl+Y</kbd></div>
+      <div class="sc-row"><span>Copy overlay</span><kbd>Ctrl+C</kbd></div>
+      <div class="sc-row"><span>Paste overlay</span><kbd>Ctrl+V</kbd></div>
+      <div class="sc-row"><span>Delete overlay</span><kbd>Delete</kbd></div>
+      <div class="sc-row"><span>Duplicate</span><kbd>Ctrl+D</kbd></div>
+      <div class="sc-row"><span>Save</span><kbd>Ctrl+S</kbd></div>
+    </div>
+    <div class="sc-category">
+      <h3>Navigation</h3>
+      <div class="sc-row"><span>Previous slide</span><kbd>Left</kbd></div>
+      <div class="sc-row"><span>Next slide</span><kbd>Right</kbd></div>
+      <div class="sc-row"><span>Presentation mode</span><kbd>F5</kbd></div>
+      <div class="sc-row"><span>Toggle grid</span><kbd>G</kbd></div>
+      <div class="sc-row"><span>Show shortcuts</span><kbd>?</kbd></div>
+      <div class="sc-row"><span>Escape</span><kbd>Esc</kbd></div>
+    </div>
+  </div>
+</div>
+
+<!-- Help Modal -->
+<div id="help-modal">
+  <div class="help-card">
+    <div class="help-header">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:28px;height:28px;color:var(--accent2)"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 015.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+      <div>
+        <h2>SlideCraft Help Guide</h2>
+        <p style="color:var(--text3);font-size:12px;margin:0">Everything you need to know to get started</p>
+      </div>
+      <button onclick="closeHelpModal()" style="margin-left:auto;background:none;border:none;color:var(--text3);cursor:pointer;font-size:20px;padding:4px">&times;</button>
+    </div>
+
+    <div class="help-body">
+      <div class="help-section">
+        <h3>Getting Started</h3>
+        <div class="help-step"><span class="help-num">1</span><div><strong>Upload a PPTX or PDF</strong><br>Click <em>Upload</em> in the header or drag & drop a .pptx / .pdf file anywhere on the page.</div></div>
+        <div class="help-step"><span class="help-num">2</span><div><strong>Remove NotebookLM Logo</strong><br>Click <em>Remove Logo</em> to seamlessly erase the watermark from all slides using AI inpainting.</div></div>
+        <div class="help-step"><span class="help-num">3</span><div><strong>Edit & Export</strong><br>Add overlays, edit text, apply filters, then click <em>PPTX</em>, <em>PDF</em>, <em>PNG</em>, or <em>GIF</em> to export.</div></div>
+      </div>
+
+      <div class="help-section">
+        <h3>Editing Text in Slides</h3>
+        <div class="help-step"><span class="help-num">A</span><div><strong>Edstellar Text Remove</strong><br>For PDF decks, click <em>Edstellar Text Remove</em> to instantly erase the wordmark using the cached PDF text layer (no OCR needed).</div></div>
+        <div class="help-step"><span class="help-num">B</span><div><strong>Cover & Type (Manual)</strong><br>Press <kbd>C</kbd> or select the Cover tool. Draw a rectangle over text you want to replace. The background color is auto-sampled. Type your new text, then click <em>Apply</em>.</div></div>
+        <div class="help-step"><span class="help-num">C</span><div><strong>Inline Editing</strong><br>Double-click any text overlay to edit it directly on the canvas.</div></div>
+      </div>
+
+      <div class="help-section">
+        <h3>Drawing & Shapes</h3>
+        <div class="help-grid">
+          <div class="help-item"><kbd>S</kbd> <strong>Select</strong> — Click to select, drag to move, handles to resize</div>
+          <div class="help-item"><kbd>T</kbd> <strong>Text</strong> — Draw a text box, type content</div>
+          <div class="help-item"><kbd>R</kbd> <strong>Rectangle</strong> — Draw a colored rectangle</div>
+          <div class="help-item"><kbd>C</kbd> <strong>Cover</strong> — Cover original text and replace</div>
+          <div class="help-item"><strong>Circle</strong> — Draw circles and ellipses</div>
+          <div class="help-item"><strong>Line</strong> — Draw lines with arrowheads</div>
+          <div class="help-item"><strong>Callout</strong> — Speech bubble callout shapes</div>
+          <div class="help-item"><strong>Freehand</strong> — Draw freely with pen tool</div>
+          <div class="help-item"><strong>Image</strong> — Upload and place images as overlays</div>
+        </div>
+      </div>
+
+      <div class="help-section">
+        <h3>Toolbar Guide</h3>
+        <div class="help-grid">
+          <div class="help-item"><strong>TOOLS</strong> — Select, Text, Rect, Circle, Line, Callout, Draw, Cover</div>
+          <div class="help-item"><strong>EDIT</strong> — Undo, Redo, Delete, Duplicate</div>
+          <div class="help-item"><strong>INSERT</strong> — Image, QR Code, Watermark</div>
+          <div class="help-item"><strong>SLIDE</strong> — Crop, Rotate, Snap Grid</div>
+          <div class="help-item"><strong>MANAGE</strong> — Find/Replace, History, Templates, Comments</div>
+        </div>
+      </div>
+
+      <div class="help-section">
+        <h3>Right Panel Tabs</h3>
+        <div class="help-grid">
+          <div class="help-item"><strong>Layers</strong> — View and select all overlays on the current slide</div>
+          <div class="help-item"><strong>Properties</strong> — Edit font, color, size, effects of selected overlay</div>
+          <div class="help-item"><strong>Notes</strong> — Add speaker notes (included in PPTX export)</div>
+          <div class="help-item"><strong>Filters</strong> — Apply brightness, contrast, blur, grayscale, sepia to slides</div>
+          <div class="help-item"><strong>Comments</strong> — View, resolve, and delete annotation comments</div>
+        </div>
+      </div>
+
+      <div class="help-section">
+        <h3>Export Options</h3>
+        <div class="help-grid">
+          <div class="help-item"><strong>PPTX</strong> — PowerPoint with overlays as editable text layers</div>
+          <div class="help-item"><strong>PDF</strong> — Multi-page PDF of all slides</div>
+          <div class="help-item"><strong>PNG</strong> — ZIP archive of all slides as PNG images</div>
+          <div class="help-item"><strong>GIF</strong> — Animated slideshow GIF</div>
+          <div class="help-item"><strong>Apply</strong> — Burns overlays permanently into the slide images</div>
+        </div>
+      </div>
+
+      <div class="help-section">
+        <h3>Video Logo Remover</h3>
+        <div class="help-step"><span class="help-num">1</span><div>Click <em>Video</em> in the header to open the video tool</div></div>
+        <div class="help-step"><span class="help-num">2</span><div>Upload your video (MP4, MOV, AVI, MKV)</div></div>
+        <div class="help-step"><span class="help-num">3</span><div>Drag the red box over the logo on the preview frame</div></div>
+        <div class="help-step"><span class="help-num">4</span><div>Click <em>Remove Logo</em> — watch real-time progress with ETA</div></div>
+        <div class="help-step"><span class="help-num">5</span><div>Click <em>Stop</em> to cancel, or <em>Download</em> when done</div></div>
+      </div>
+
+      <div class="help-section">
+        <h3>Tips & Tricks</h3>
+        <div class="help-grid">
+          <div class="help-item">Press <kbd>?</kbd> to see all keyboard shortcuts</div>
+          <div class="help-item">Press <kbd>F5</kbd> for fullscreen presentation mode</div>
+          <div class="help-item">Press <kbd>G</kbd> to toggle the alignment snap grid</div>
+          <div class="help-item"><kbd>Ctrl+Z</kbd> / <kbd>Ctrl+Y</kbd> for undo/redo (50 steps)</div>
+          <div class="help-item"><kbd>Ctrl+C</kbd> / <kbd>Ctrl+V</kbd> to copy/paste overlays across slides</div>
+          <div class="help-item">Right-click an overlay for context menu (duplicate, front/back)</div>
+          <div class="help-item">Drag thumbnails in the sidebar to reorder slides</div>
+          <div class="help-item">Save versions regularly — use History to rollback if needed</div>
+          <div class="help-item">Save Templates to reuse slide layouts across presentations</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Header -->
+<header>
+  <!-- Left: Logo + Deck badge + Slide pill -->
+  <div class="nav-section">
+    <div class="logo">
+      <div class="logo-icon">
+        <svg viewBox="0 0 24 24" fill="currentColor"><path d="M4 6h16v2H4zm0 5h16v2H4zm0 5h16v2H4z"/></svg>
+      </div>
+      <div class="logo-text">
+        <span class="logo-brand">SlideCraft</span>
+        <span class="logo-sub">Slide Editor</span>
+      </div>
+    </div>
+    <div class="deck-name" id="deck-name" title="Active deck">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="13" height="13"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14,2 14,8 20,8"/></svg>
+      <span class="deck-name-text" id="deck-name-text">No deck loaded</span>
+    </div>
+    <div class="slide-pill" id="slide-pill">
+      <button class="pill-nav-btn" onclick="gotoSlide(currentSlide-1)" title="Previous (←)">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="15,18 9,12 15,6"/></svg>
+      </button>
+      <span class="pill-label">
+        <strong id="slide-num">1</strong><span class="pill-sep">/</span><span id="slide-total">{{ num_slides }}</span>
+      </span>
+      <button class="pill-nav-btn" onclick="gotoSlide(currentSlide+1)" title="Next (→)">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="9,18 15,12 9,6"/></svg>
+      </button>
+    </div>
+  </div>
+
+  <!-- Center: Main action groups -->
+  <div class="header-actions">
+
+    <!-- FILE group -->
+    <div class="action-group">
+      <span class="group-label">File</span>
+      <label class="btn-action" style="cursor:pointer" title="Upload PPTX or PDF file">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 16V4m0 0L8 8m4-4l4 4"/><path d="M20 16v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2"/></svg>
+        <span class="act-label">Upload</span>
+        <input type="file" accept=".pptx,.pdf" id="upload-input" onchange="uploadPPTX(this)" style="display:none">
+      </label>
+      <button class="btn-action bulk-btn" onclick="folderRemoveLogo()" title="Folder: process every PPTX in a local folder">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2V7z"/><path d="M9 13l2 2 4-4"/></svg>
+        <span class="act-label">Folder</span>
+      </button>
+      <div class="group-sep"></div>
+      <button class="btn-action" onclick="removeLogos()" title="Remove NotebookLM watermark">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M4.93 4.93l14.14 14.14"/></svg>
+        <span class="act-label">Remove Logo</span>
+      </button>
+      <button class="btn-action" onclick="removeEdstellarText()" title="Erase the Edstellar wordmark from the top-left of every slide">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="9" height="6" rx="1"/><path d="M5 6h5"/><path d="M4 4l7 4"/></svg>
+        <span class="act-label">Edstellar Text Remove</span>
+      </button>
+    </div>
+
+    <!-- EDIT group -->
+    <div class="action-group">
+      <span class="group-label">Edit</span>
+      <button class="btn-action" onclick="bakeOverlays()" title="Apply edits permanently into slide image">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22c5.523 0 10-4.477 10-10S17.523 2 12 2 2 6.477 2 12s4.477 10 10 10z"/><polyline points="16,8 12,16 8,8"/></svg>
+        <span class="act-label">Apply</span>
+      </button>
+      <div class="group-sep"></div>
+      <button class="btn-action" onclick="saveCurrentSlide()" title="Save (Ctrl+S)" id="save-btn">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 21H5a2 2 0 01-2-2V5a2 2 0 012-2h11l5 5v11a2 2 0 01-2 2z"/><polyline points="17,21 17,13 7,13 7,21"/><polyline points="7,3 7,8 15,8"/></svg>
+        <span class="act-label">Save</span>
+        <span class="save-indicator">
+          <span class="save-dot" id="save-dot"></span>
+          <span class="save-check" id="save-check"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20,6 9,17 4,12"/></svg></span>
+        </span>
+      </button>
+    </div>
+
+    <!-- SLIDE group -->
+    <div class="action-group">
+      <span class="group-label">Slide</span>
+      <button class="btn-action" onclick="duplicateSlide()" title="Duplicate this slide (Ctrl+D)">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>
+        <span class="act-label">Duplicate</span>
+      </button>
+      <div class="group-sep"></div>
+      <button class="btn-action" onclick="downloadSlidePNG()" title="Save current slide as PNG">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7,10 12,15 17,10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+        <span class="act-label">PNG</span>
+      </button>
+      <div class="group-sep"></div>
+      <button class="btn-action" onclick="printDeck()" title="Print deck (Ctrl+P)">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6,9 6,2 18,2 18,9"/><path d="M6 18H4a2 2 0 01-2-2v-5a2 2 0 012-2h16a2 2 0 012 2v5a2 2 0 01-2 2h-2"/><rect x="6" y="14" width="12" height="8"/></svg>
+        <span class="act-label">Print</span>
+      </button>
+      <div class="group-sep"></div>
+      <button class="btn-action btn-danger" onclick="deleteSlide()" title="Delete this slide (Del)">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3,6 5,6 21,6"/><path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/><path d="M10 11v6M14 11v6"/></svg>
+        <span class="act-label">Delete</span>
+      </button>
+    </div>
+
+    <!-- EXPORT dropdown -->
+    <div class="action-group">
+      <span class="group-label">Export</span>
+      <div class="export-dropdown">
+        <button class="export-dropdown-btn" onclick="toggleExportMenu(event)" title="Export slides">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7,10 12,15 17,10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+          <span class="act-label">Export</span>
+          <svg class="caret" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="6,9 12,15 18,9"/></svg>
+        </button>
+        <div class="export-menu" id="export-menu">
+          <button class="export-menu-item" onclick="exportPPTX(); closeExportMenu()">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14,2 14,8 20,8"/></svg>
+            PowerPoint <span class="fmt-tag">PPTX</span>
+          </button>
+          <button class="export-menu-item" onclick="exportPDF(); closeExportMenu()">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14,2 14,8 20,8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
+            PDF Document <span class="fmt-tag">PDF</span>
+          </button>
+          <button class="export-menu-item" onclick="exportPNGZip(); closeExportMenu()">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21,15 16,10 5,21"/></svg>
+            Images ZIP <span class="fmt-tag">PNG</span>
+          </button>
+          <button class="export-menu-item" onclick="exportGIF(); closeExportMenu()">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="2" width="20" height="20" rx="2.18"/><polygon points="10,8 16,12 10,16"/></svg>
+            Animation <span class="fmt-tag">GIF</span>
+          </button>
+        </div>
+      </div>
+    </div>
+
+  </div><!-- /.header-actions -->
+
+  <!-- Right: Present + ⋯ More dropdown + Help -->
+  <div class="nav-section nav-section-right">
+    <button class="btn-action btn-present" onclick="enterPresentation()" title="Present (F5)">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="5,3 19,12 5,21"/></svg>
+      <span class="act-label">Present</span>
+    </button>
+
+    <!-- ⋯ More dropdown -->
+    <div class="more-dropdown">
+      <button class="btn-action btn-more" onclick="toggleMoreMenu(event)" title="More options">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="5" cy="12" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="19" cy="12" r="1.5"/></svg>
+        <span class="act-label">More</span>
+        <svg class="caret" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="6,9 12,15 18,9"/></svg>
+      </button>
+      <div class="more-menu" id="more-menu">
+        <div class="more-menu-section">General</div>
+        <button class="more-menu-item" onclick="resetAndExport(); closeMoreMenu()">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 12a9 9 0 1 0 9-9"/><polyline points="3 4 3 10 9 10"/></svg>
+          Clean PPTX <span class="fmt-tag tag-amber">Reset</span>
+        </button>
+        <button class="more-menu-item" onclick="openMasterSlide(); closeMoreMenu()">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="9" y1="21" x2="9" y2="9"/></svg>
+          Master Slide
+        </button>
+        <button class="more-menu-item" id="theme-toggle-btn" onclick="toggleHighContrast(); closeMoreMenu()">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 2v20M2 12h10"/></svg>
+          High Contrast Theme
+        </button>
+        <div class="more-menu-divider"></div>
+        <div class="more-menu-section">Portable</div>
+        <button class="more-menu-item" onclick="exportSlidecraft(); closeMoreMenu()">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7,10 12,15 17,10"/></svg>
+          Export .slidecraft
+        </button>
+        <button class="more-menu-item" onclick="importSlidecraft(); closeMoreMenu()">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7,10 12,15 17,10"/></svg>
+          Import .slidecraft
+        </button>
+      </div>
+    </div>
+
+    <button class="btn-action btn-help" onclick="openHelpModal()" title="Help & Guide (H)">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 015.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+    </button>
+    <div id="auth-badge"></div>
+  </div>
+</header>
+
+<div class="main">
+
+  <!-- Thumbnail strip -->
+  <div class="thumb-strip" id="thumb-strip">
+    {% if slides %}
+    <div class="thumb-strip-header">
+      <span class="thumb-strip-title">Slides</span>
+      <span class="thumb-strip-count">{{ slides|length }}</span>
+    </div>
+    {% endif %}
+    {% for s in slides %}
+    <div class="thumb-item" id="thumb-{{ s.index }}" data-index="{{ s.index }}" onclick="gotoSlide({{ s.index }})" draggable="true">
+      <img src="/static/{{ s.file }}" loading="lazy" alt="Slide {{ s.index }}">
+      <div class="num">{{ s.index }}</div>
+      <div class="has-overlay"></div>
+      <div class="thumb-actions">
+        <button class="thumb-action-btn" title="Duplicate slide" onclick="event.stopPropagation(); gotoSlide({{ s.index }}).then(()=>duplicateSlide())">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>
+        </button>
+        <button class="thumb-action-btn thumb-action-del" title="Delete slide" onclick="event.stopPropagation(); gotoSlide({{ s.index }}).then(()=>deleteSlide())">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3,6 5,6 21,6"/><path d="M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2"/></svg>
+        </button>
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+
+  <!-- Canvas area -->
+  <div class="canvas-area">
+    <div class="canvas-toolbar">
+      <!-- ROW 1: Drawing tools -->
+      <span class="toolbar-label">TOOLS</span>
+      <div class="tool-group">
+        <button class="tool-btn active" id="tool-select" onclick="setTool('select')" title="Select/Move">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 3l7.07 16.97 2.51-7.39 7.39-2.51L3 3z"/></svg>
+          <span class="kbd">S</span>
+        </button>
+        <button class="tool-btn" id="tool-text" onclick="setTool('text')" title="Text box">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="4,7 4,4 20,4 20,7"/><line x1="12" y1="4" x2="12" y2="20"/></svg>
+          <span class="kbd">T</span>
+        </button>
+        <button class="tool-btn" id="tool-rect" onclick="setTool('rect')" title="Rectangle">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/></svg>
+          <span class="kbd">R</span>
+        </button>
+        <button class="tool-btn" id="tool-circle" onclick="setTool('circle')" title="Circle">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/></svg>
+        </button>
+        <button class="tool-btn" id="tool-line" onclick="setTool('line')" title="Line/Arrow">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12,5 19,12 12,19"/></svg>
+        </button>
+        <button class="tool-btn" id="tool-callout" onclick="setTool('callout')" title="Callout">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg>
+        </button>
+        <button class="tool-btn" id="tool-draw" onclick="setTool('draw')" title="Freehand">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 19l7-7 3 3-7 7-3-3z"/><path d="M18 13l-1.5-7.5L2 2l3.5 14.5L13 18l5-5z"/></svg>
+        </button>
+        <button class="tool-btn" id="tool-cover" onclick="setTool('cover')" title="Cover & Type">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="8" y1="12" x2="16" y2="12"/><line x1="8" y1="16" x2="13" y2="16"/></svg>
+          <span class="kbd">C</span>
+        </button>
+      </div>
+
+      <div class="tool-sep"></div>
+
+      <span class="toolbar-label">EDIT</span>
+      <div class="tool-group">
+        <button class="tool-btn btn-sm disabled" id="btn-undo" onclick="undo()" title="Undo (Ctrl+Z)">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="1,4 1,10 7,10"/><path d="M3.51 15a9 9 0 102.13-9.36L1 10"/></svg>
+        </button>
+        <button class="tool-btn btn-sm disabled" id="btn-redo" onclick="redo()" title="Redo (Ctrl+Y)">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23,4 23,10 17,10"/><path d="M20.49 15a9 9 0 11-2.13-9.36L23 10"/></svg>
+        </button>
+        <button class="tool-btn btn-sm" onclick="deleteSelected()" title="Delete (Del)">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3,6 5,6 21,6"/><path d="M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2"/></svg>
+        </button>
+        <button class="tool-btn btn-sm" onclick="duplicateSelected()" title="Duplicate">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>
+        </button>
+      </div>
+
+      <div class="tool-sep"></div>
+
+      <span class="toolbar-label">INSERT</span>
+      <div class="tool-group">
+        <button class="tool-btn btn-sm" onclick="addImageOverlay()" title="Image overlay">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21,15 16,10 5,21"/></svg>
+        </button>
+        <button class="tool-btn btn-sm" onclick="openQRModal()" title="QR code">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>
+        </button>
+        <button class="tool-btn btn-sm" onclick="openWatermarkModal()" title="Watermark">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+        </button>
+        <button class="tool-btn btn-sm" onclick="openLogoModal()" title="Insert Logo (draggable)">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="6" width="20" height="12" rx="2"/><circle cx="8" cy="12" r="2"/><path d="M14 10h4M14 14h4"/></svg>
+        </button>
+      </div>
+      <input type="file" id="image-upload-input" accept="image/*" style="display:none" onchange="handleImageUpload(this)">
+
+      <div class="tool-sep"></div>
+
+      <span class="toolbar-label">SLIDE</span>
+      <div class="tool-group">
+        <button class="tool-btn btn-sm" onclick="startCrop()" title="Crop">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6.13 1L6 16a2 2 0 002 2h15"/><path d="M1 6.13L16 6a2 2 0 012 2v15"/></svg>
+        </button>
+        <button class="tool-btn btn-sm" onclick="rotateSlide(90)" title="Rotate CW">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23,4 23,10 17,10"/><path d="M20.49 15a9 9 0 11-2.13-9.36L23 10"/></svg>
+        </button>
+        <button class="tool-btn btn-sm" id="btn-grid" onclick="toggleGrid()" title="Grid (G)">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="3" y1="15" x2="21" y2="15"/><line x1="9" y1="3" x2="9" y2="21"/><line x1="15" y1="3" x2="15" y2="21"/></svg>
+        </button>
+      </div>
+
+      <div class="tool-sep"></div>
+
+      <span class="toolbar-label">MANAGE</span>
+      <div class="tool-group">
+        <button class="tool-btn btn-sm" onclick="openFindReplaceModal()" title="Find & Replace">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+        </button>
+        <button class="tool-btn btn-sm" onclick="openHistoryModal()" title="Version history">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12,6 12,12 16,14"/></svg>
+        </button>
+        <button class="tool-btn btn-sm" onclick="openTemplatesModal()" title="Templates">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="9" y1="21" x2="9" y2="9"/></svg>
+        </button>
+        <button class="tool-btn btn-sm" id="tool-comment" onclick="setTool('comment')" title="Comments">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 11.5a8.38 8.38 0 01-.9 3.8 8.5 8.5 0 01-7.6 4.7 8.38 8.38 0 01-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 01-.9-3.8 8.5 8.5 0 014.7-7.6 8.38 8.38 0 013.8-.9h.5a8.48 8.48 0 018 8v.5z"/></svg>
+        </button>
+      </div>
+
+      <div class="tool-sep"></div>
+
+      <div class="zoom-control">
+        <input type="range" class="zoom-slider" min="30" max="120" value="70" id="zoom-range" oninput="setZoom(this.value)">
+        <span class="zoom-val" id="zoom-val">70%</span>
+        <button class="tool-btn btn-sm" onclick="fitToScreen()" title="Fit to screen" style="padding:3px 6px">Fit</button>
+      </div>
+
+      <div class="slide-nav">
+        <button class="nav-btn" onclick="gotoSlide(currentSlide-1)" title="Previous slide">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="15,18 9,12 15,6"/></svg>
+        </button>
+        <span class="nav-label" id="slide-nav-label">1 / {{ num_slides }}</span>
+        <button class="nav-btn" onclick="gotoSlide(currentSlide+1)" title="Next slide">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9,18 15,12 9,6"/></svg>
+        </button>
+      </div>
+    </div>
+
+    <div class="canvas-viewport" id="viewport">
+      {% if num_slides == 0 %}
+      <div class="canvas-empty-state" id="canvas-empty">
+        <div class="empty-icon">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M12 16V4m0 0L8 8m4-4l4 4"/><path d="M20 16v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2"/></svg>
+        </div>
+        <h3>No slides loaded</h3>
+        <p>Upload a PPTX or PDF to start editing,<br>or use Folder to process every PPTX in a local folder.</p>
+        <div class="empty-actions">
+          <label class="empty-btn primary" style="cursor:pointer">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 16V4m0 0L8 8m4-4l4 4"/><path d="M20 16v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2"/></svg>
+            Upload PPTX/PDF
+            <input type="file" accept=".pptx,.pdf" onchange="uploadPPTX(this)" style="display:none">
+          </label>
+          <button class="empty-btn" onclick="folderRemoveLogo()" style="cursor:pointer">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2V7z"/><path d="M9 13l2 2 4-4"/></svg>
+            Folder
+          </button>
+        </div>
+      </div>
+      {% endif %}
+      <div class="slide-container" id="slide-container" style="width:933px;{% if num_slides == 0 %}display:none{% endif %}">
+        <img id="slide-img" src="{% if num_slides > 0 %}/static/slides/slide-001.jpg{% endif %}" alt="Slide" style="width:100%">
+        <canvas id="overlay-canvas" class="overlay-canvas"></canvas>
+      </div>
+    </div>
+  </div>
+
+  <!-- Right panel -->
+  <div class="right-panel">
+    <div class="panel-tabs">
+      <div class="panel-tab active" id="tab-overlays" onclick="switchTab('overlays')" title="Layers">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>
+        <span class="tab-label">Layers</span>
+      </div>
+      <div class="panel-tab" id="tab-props" onclick="switchTab('props')" title="Properties">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"/></svg>
+        <span class="tab-label">Properties</span>
+      </div>
+      <div class="panel-tab" id="tab-notes" onclick="switchTab('notes')" title="Notes">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14,2 14,8 20,8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10,9 9,9 8,9"/></svg>
+        <span class="tab-label">Notes</span>
+      </div>
+      <div class="panel-tab" id="tab-filters" onclick="switchTab('filters')" title="Filters">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="22,3 2,3 10,12.46 10,19 14,21 14,12.46"/></svg>
+        <span class="tab-label">Filters</span>
+      </div>
+      <div class="panel-tab" id="tab-comments" onclick="switchTab('comments')" title="Comments">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 11.5a8.38 8.38 0 01-.9 3.8 8.5 8.5 0 01-7.6 4.7 8.38 8.38 0 01-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 01-.9-3.8 8.5 8.5 0 014.7-7.6 8.38 8.38 0 013.8-.9h.5a8.48 8.48 0 018 8v.5z"/></svg>
+        <span class="tab-label">Comments</span>
+      </div>
+    </div>
+
+    <div class="panel-body" id="panel-overlays">
+      <div style="margin-bottom:12px; display:flex; gap:6px">
+        <button class="btn btn-primary btn-sm" style="flex:1" onclick="addOverlay('text')">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+          Add Text
+        </button>
+        <button class="btn btn-glass btn-sm" onclick="addImageOverlay()" title="Add Image">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21,15 16,10 5,21"/></svg>
+          Image
+        </button>
+      </div>
+      <div class="ov-list" id="ov-list">
+        <div class="empty-state">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>
+          <div>No overlays yet</div>
+          <div style="font-size:11px;margin-top:4px">Use the toolbar to add text or shapes</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="panel-body" id="panel-props" style="display:none">
+      <div id="props-empty" class="empty-state">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4"/></svg>
+        <div>Select an overlay to edit</div>
+      </div>
+      <div id="props-form" style="display:none" class="fade-in">
+        <div class="field" id="field-text">
+          <label>Text Content</label>
+          <textarea id="prop-text" oninput="updateSelectedProp('text', this.value)" rows="3" placeholder="Enter text..."></textarea>
+        </div>
+        <div class="field">
+          <label>Font Family</label>
+          <select id="prop-fontfamily" onchange="updateSelectedProp('fontFamily', this.value)" style="font-family:inherit">
+            <option value="Inter" style="font-family:Inter">Inter</option>
+            <option value="Segoe UI" style="font-family:'Segoe UI'">Segoe UI</option>
+            <option value="Arial" style="font-family:Arial">Arial</option>
+            <option value="Calibri" style="font-family:Calibri">Calibri</option>
+            <option value="Cambria" style="font-family:Cambria">Cambria</option>
+            <option value="Verdana" style="font-family:Verdana">Verdana</option>
+            <option value="Georgia" style="font-family:Georgia">Georgia</option>
+            <option value="Tahoma" style="font-family:Tahoma">Tahoma</option>
+            <option value="Trebuchet MS" style="font-family:'Trebuchet MS'">Trebuchet MS</option>
+            <option value="Candara" style="font-family:Candara">Candara</option>
+            <option value="Corbel" style="font-family:Corbel">Corbel</option>
+            <option value="Impact" style="font-family:Impact">Impact</option>
+            <option value="Consolas" style="font-family:Consolas">Consolas</option>
+          </select>
+        </div>
+        <div class="field-row">
+          <div class="field">
+            <label>Font Size</label>
+            <input type="number" id="prop-fontsize" value="18" min="8" max="72" oninput="updateSelectedProp('fontSize', +this.value)">
+          </div>
+          <div class="field">
+            <label>Text Color</label>
+            <input type="color" id="prop-color" value="#FFFFFF" oninput="updateSelectedProp('color', this.value)">
+          </div>
+        </div>
+        <div class="field-row">
+          <div class="field">
+            <label>Alignment</label>
+            <select id="prop-align" onchange="updateSelectedProp('align', this.value)">
+              <option value="left">Left</option>
+              <option value="center">Center</option>
+              <option value="right">Right</option>
+            </select>
+          </div>
+          <div class="field">
+            <label>Vertical</label>
+            <select id="prop-valign" onchange="updateSelectedProp('verticalAlign', this.value)">
+              <option value="top">Top</option>
+              <option value="center">Center</option>
+              <option value="bottom">Bottom</option>
+            </select>
+          </div>
+        </div>
+        <div class="field-row">
+          <div class="field checkbox-row">
+            <input type="checkbox" id="prop-bold" onchange="updateSelectedProp('bold', this.checked)">
+            <label style="display:inline;text-transform:none;letter-spacing:0;font-size:13px;color:var(--text)">Bold</label>
+          </div>
+          <div class="field checkbox-row">
+            <input type="checkbox" id="prop-italic" onchange="updateSelectedProp('italic', this.checked)">
+            <label style="display:inline;text-transform:none;letter-spacing:0;font-size:13px;color:var(--text)">Italic</label>
+          </div>
+        </div>
+        <div class="field checkbox-row">
+          <input type="checkbox" id="prop-underline" onchange="updateSelectedProp('underline', this.checked)">
+          <label style="display:inline;text-transform:none;letter-spacing:0;font-size:13px;color:var(--text)">Underline</label>
+        </div>
+        <div class="field" id="field-bgcolor">
+          <label>Background Color</label>
+          <div style="display:flex;gap:8px;align-items:center">
+            <input type="color" id="prop-bgcolor" value="#1a1d27" oninput="updateSelectedProp('bgColor', this.value)">
+            <div class="toggle-row">
+              <input type="checkbox" id="prop-nobg" onchange="toggleNoBg(this.checked)">
+              <label class="toggle-switch" for="prop-nobg"></label>
+              <span style="font-size:12px;color:var(--text2)">Transparent</span>
+            </div>
+          </div>
+        </div>
+        <div class="field">
+          <label>Letter Spacing</label>
+          <div style="display:flex;gap:8px;align-items:center">
+            <input type="range" class="zoom-slider" min="-5" max="20" step="0.5" value="0" id="prop-letterspacing" oninput="updateSelectedProp('letterSpacing', +this.value);document.getElementById('ls-val').textContent=this.value+'px'" style="flex:1">
+            <span class="range-val" id="ls-val">0px</span>
+          </div>
+        </div>
+        <div class="field">
+          <label>Line Height</label>
+          <div style="display:flex;gap:8px;align-items:center">
+            <input type="range" class="zoom-slider" min="0.8" max="3" step="0.1" value="1.3" id="prop-lineheight" oninput="updateSelectedProp('lineHeight', +this.value);document.getElementById('lh-val').textContent=this.value+'x'" style="flex:1">
+            <span class="range-val" id="lh-val">1.3x</span>
+          </div>
+        </div>
+        <div class="field">
+          <label>Text Transform</label>
+          <select id="prop-texttransform" onchange="updateSelectedProp('textTransform', this.value)">
+            <option value="none">None</option>
+            <option value="uppercase">UPPERCASE</option>
+            <option value="lowercase">lowercase</option>
+            <option value="capitalize">Title Case</option>
+          </select>
+        </div>
+        <div class="field">
+          <label>List Style</label>
+          <select id="prop-liststyle" onchange="updateSelectedProp('listStyle', this.value)">
+            <option value="none">None</option>
+            <option value="bullet">&bull; Bullet</option>
+            <option value="number">1. Numbered</option>
+          </select>
+        </div>
+        <div class="field">
+          <label>Text Effects</label>
+          <div style="display:flex;flex-direction:column;gap:8px">
+            <div class="toggle-row">
+              <input type="checkbox" id="prop-shadow" onchange="updateSelectedProp('shadow', this.checked)">
+              <label class="toggle-switch" for="prop-shadow"></label>
+              <span style="font-size:12px;color:var(--text2)">Shadow</span>
+              <input type="color" id="prop-shadowcolor" value="#000000" oninput="updateSelectedProp('shadowColor', this.value)" style="width:28px;height:24px;padding:1px;margin-left:auto">
+            </div>
+            <div class="toggle-row">
+              <input type="checkbox" id="prop-outline" onchange="updateSelectedProp('outline', this.checked)">
+              <label class="toggle-switch" for="prop-outline"></label>
+              <span style="font-size:12px;color:var(--text2)">Outline</span>
+              <input type="color" id="prop-outlinecolor" value="#000000" oninput="updateSelectedProp('outlineColor', this.value)" style="width:28px;height:24px;padding:1px;margin-left:auto">
+            </div>
+            <div class="toggle-row">
+              <input type="checkbox" id="prop-autofit" onchange="updateSelectedProp('autoFit', this.checked)">
+              <label class="toggle-switch" for="prop-autofit"></label>
+              <span style="font-size:12px;color:var(--text2)">Auto-fit text</span>
+            </div>
+          </div>
+        </div>
+        <div class="field" id="field-fillcolor" style="display:none">
+          <label>Fill Color</label>
+          <input type="color" id="prop-fillcolor" value="#2563EB" oninput="updateSelectedProp('fillColor', this.value)">
+        </div>
+        <div class="field" id="field-imgsrc" style="display:none">
+          <label>Image Source</label>
+          <button class="btn btn-glass btn-sm" onclick="replaceImageOverlay()">Replace Image</button>
+        </div>
+        <div class="field">
+          <label>Opacity</label>
+          <div style="display:flex;gap:8px;align-items:center">
+            <input type="range" class="zoom-slider" min="0" max="1" step="0.05" id="prop-opacity" value="1" oninput="updateSelectedProp('opacity', +this.value);document.getElementById('opacity-val').textContent=Math.round(this.value*100)+'%'" style="flex:1">
+            <span class="range-val" id="opacity-val">100%</span>
+          </div>
+        </div>
+
+        <div class="divider">
+          <div class="section-title">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 3H3v7h18V3zM21 14H3v7h18v-7z"/></svg>
+            Position & Size
+          </div>
+          <div class="field-row">
+            <div class="field"><label>X (%)</label><input type="number" id="prop-x" step="0.1" oninput="updateSelectedPos()"></div>
+            <div class="field"><label>Y (%)</label><input type="number" id="prop-y" step="0.1" oninput="updateSelectedPos()"></div>
+          </div>
+          <div class="field-row">
+            <div class="field"><label>W (%)</label><input type="number" id="prop-w" step="0.1" oninput="updateSelectedPos()"></div>
+            <div class="field"><label>H (%)</label><input type="number" id="prop-h" step="0.1" oninput="updateSelectedPos()"></div>
+          </div>
+        </div>
+        <button class="btn btn-danger btn-sm" style="width:100%;margin-top:12px" onclick="deleteSelected()">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3,6 5,6 21,6"/><path d="M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2"/></svg>
+          Delete Overlay
+        </button>
+      </div>
+    </div>
+
+    <div class="panel-body notes-area" id="panel-notes" style="display:none">
+      <div class="section-title">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14,2 14,8 20,8"/></svg>
+        Speaker Notes
+      </div>
+      <textarea id="notes-text" placeholder="Add speaker notes for this slide..." oninput="markDirty()"></textarea>
+      <button class="btn btn-primary btn-sm" style="margin-top:10px;width:100%" onclick="saveCurrentSlide()">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 21H5a2 2 0 01-2-2V5a2 2 0 012-2h11l5 5v11a2 2 0 01-2 2z"/><polyline points="17,21 17,13 7,13 7,21"/></svg>
+        Save Notes
+      </button>
+
+      <div class="section-title" style="margin-top:18px">Color Palette (this slide)</div>
+      <div id="feat-palette"></div>
+      <button class="btn btn-glass btn-sm" style="margin-top:6px;width:100%" onclick="loadDeckPalette()">Deck palette</button>
+
+    </div>
+
+    <!-- Filters Panel -->
+    <div class="panel-body" id="panel-filters" style="display:none">
+      <div class="section-title">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06"/></svg>
+        Image Filters
+        <span id="fx-preview-tag" style="margin-left:auto;font-size:9px;background:var(--accent-soft);color:var(--accent2);padding:2px 6px;border-radius:4px;font-weight:600;display:none">PREVIEW</span>
+      </div>
+
+      <div class="fx-presets">
+        <button class="fx-preset" data-preset="none" onclick="applyFxPreset('none')">None</button>
+        <button class="fx-preset" data-preset="bw" onclick="applyFxPreset('bw')">B&amp;W</button>
+        <button class="fx-preset" data-preset="vintage" onclick="applyFxPreset('vintage')">Vintage</button>
+        <button class="fx-preset" data-preset="vibrant" onclick="applyFxPreset('vibrant')">Vibrant</button>
+        <button class="fx-preset" data-preset="cool" onclick="applyFxPreset('cool')">Cool</button>
+        <button class="fx-preset" data-preset="warm" onclick="applyFxPreset('warm')">Warm</button>
+      </div>
+
+      <div class="fx-slider-row">
+        <div class="fx-label">Brightness <span class="fx-val" id="fx-brightness-val">100%</span></div>
+        <input type="range" class="zoom-slider" id="fx-brightness" min="0" max="200" step="1" value="100" oninput="updateFxLive()">
+      </div>
+      <div class="fx-slider-row">
+        <div class="fx-label">Contrast <span class="fx-val" id="fx-contrast-val">100%</span></div>
+        <input type="range" class="zoom-slider" id="fx-contrast" min="0" max="200" step="1" value="100" oninput="updateFxLive()">
+      </div>
+      <div class="fx-slider-row">
+        <div class="fx-label">Saturation <span class="fx-val" id="fx-saturation-val">100%</span></div>
+        <input type="range" class="zoom-slider" id="fx-saturation" min="0" max="300" step="1" value="100" oninput="updateFxLive()">
+      </div>
+      <div class="fx-slider-row">
+        <div class="fx-label">Hue <span class="fx-val" id="fx-hue-val">0°</span></div>
+        <input type="range" class="zoom-slider" id="fx-hue" min="-180" max="180" step="1" value="0" oninput="updateFxLive()">
+      </div>
+      <div class="fx-slider-row">
+        <div class="fx-label">Blur <span class="fx-val" id="fx-blur-val">0px</span></div>
+        <input type="range" class="zoom-slider" id="fx-blur" min="0" max="20" step="0.1" value="0" oninput="updateFxLive()">
+      </div>
+      <div class="fx-slider-row">
+        <div class="fx-label">Sepia <span class="fx-val" id="fx-sepia-val">0%</span></div>
+        <input type="range" class="zoom-slider" id="fx-sepia" min="0" max="100" step="1" value="0" oninput="updateFxLive()">
+      </div>
+      <div class="fx-slider-row">
+        <div class="fx-label">Grayscale <span class="fx-val" id="fx-grayscale-val">0%</span></div>
+        <input type="range" class="zoom-slider" id="fx-grayscale" min="0" max="100" step="1" value="0" oninput="updateFxLive()">
+      </div>
+      <div class="fx-slider-row">
+        <div class="fx-label" title="Server-side only — no live preview">
+          Sharpen <span class="fx-val" id="fx-sharpen-val">100%</span>
+          <svg style="width:10px;height:10px;opacity:0.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 8v4M12 16h.01"/></svg>
+        </div>
+        <input type="range" class="zoom-slider" id="fx-sharpen" min="0" max="300" step="1" value="100" oninput="updateFxLive()">
+      </div>
+
+      <div class="divider"></div>
+
+      <div class="field">
+        <label>Apply To</label>
+        <div class="wm-segmented">
+          <button class="wm-seg active" id="fx-scope-current" onclick="setFxScope('current')">Current</button>
+          <button class="wm-seg" id="fx-scope-all" onclick="setFxScope('all')">All slides</button>
+        </div>
+      </div>
+
+      <div style="display:flex;gap:6px;margin-top:10px">
+        <button class="btn btn-glass btn-sm" style="flex:1" onclick="resetFxSliders()" title="Discard preview — sliders only">Discard</button>
+        <button class="btn btn-glass btn-sm" style="flex:1" onclick="resetFxToOriginal()" title="Restore the slide image to its uploaded original">Reset image</button>
+      </div>
+      <button class="btn btn-primary btn-sm" id="fx-apply-btn" style="width:100%;margin-top:6px" onclick="applyFiltersNow()">Apply</button>
+      <div style="font-size:11px;color:var(--text3);margin-top:8px;line-height:1.4">
+        Slider changes are <strong>live preview only</strong>. Click <strong>Apply</strong> to bake them into the slide image (snapshotted — revertable from the Applied tab).
+      </div>
+    </div>
+
+    <!-- Comments Panel -->
+    <div class="panel-body" id="panel-comments" style="display:none">
+      <div class="section-title">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 11.5a8.38 8.38 0 01-.9 3.8 8.5 8.5 0 01-7.6 4.7 8.38 8.38 0 01-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 01-.9-3.8 8.5 8.5 0 014.7-7.6 8.38 8.38 0 013.8-.9h.5a8.48 8.48 0 018 8v.5z"/></svg>
+        Slide Comments
+      </div>
+      <div id="comments-list">
+        <div class="empty-state">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" style="width:32px;height:32px;opacity:0.3"><path d="M21 11.5a8.38 8.38 0 01-.9 3.8 8.5 8.5 0 01-7.6 4.7 8.38 8.38 0 01-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 01-.9-3.8 8.5 8.5 0 014.7-7.6 8.38 8.38 0 013.8-.9h.5a8.48 8.48 0 018 8v.5z"/></svg>
+          <div>No comments yet</div>
+          <div style="font-size:11px;margin-top:4px">Use the comment tool to add pins on the canvas</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<!-- QR Code Modal -->
+<div class="modal-backdrop" id="qr-modal" onclick="if(event.target===this)this.classList.remove('show')">
+  <div class="modal-card" style="position:relative">
+    <h3>
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>
+      Generate QR Code
+    </h3>
+    <div class="field">
+      <label>URL</label>
+      <input type="text" id="qr-url" placeholder="https://example.com" value="https://example.com">
+    </div>
+    <button class="btn btn-primary btn-sm" style="width:100%" onclick="generateQR()">Generate & Insert</button>
+  </div>
+</div>
+
+<!-- Logo Insert Modal -->
+<div class="modal-backdrop" id="logo-modal" onclick="if(event.target===this)closeLogoModal()">
+  <div class="modal-card logo-card">
+    <div class="logo-modal-header">
+      <h3 style="margin:0;display:flex;align-items:center;gap:10px">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:18px;height:18px;color:var(--accent2)"><rect x="2" y="6" width="20" height="12" rx="2"/><circle cx="8" cy="12" r="2"/><path d="M14 10h4M14 14h4"/></svg>
+        Insert Logo
+      </h3>
+      <button class="wm-close" onclick="closeLogoModal()">×</button>
+    </div>
+
+    <div class="logo-modal-body">
+      <!-- Left: position picker + preview -->
+      <div class="logo-left-col">
+        <div class="wm-section-label">Position on Slide</div>
+        <div class="logo-pos-picker" id="logo-pos-picker">
+          <button class="logo-pos-btn" data-pos="top-left"      onclick="setLogoPos('top-left')"      title="Top Left">↖</button>
+          <button class="logo-pos-btn" data-pos="top-center"    onclick="setLogoPos('top-center')"    title="Top Center">↑</button>
+          <button class="logo-pos-btn" data-pos="top-right"     onclick="setLogoPos('top-right')"     title="Top Right">↗</button>
+          <button class="logo-pos-btn" data-pos="middle-left"   onclick="setLogoPos('middle-left')"   title="Middle Left">←</button>
+          <button class="logo-pos-btn" data-pos="center"        onclick="setLogoPos('center')"        title="Center">●</button>
+          <button class="logo-pos-btn" data-pos="middle-right"  onclick="setLogoPos('middle-right')"  title="Middle Right">→</button>
+          <button class="logo-pos-btn active" data-pos="bottom-left"   onclick="setLogoPos('bottom-left')"   title="Bottom Left">↙</button>
+          <button class="logo-pos-btn" data-pos="bottom-center" onclick="setLogoPos('bottom-center')" title="Bottom Center">↓</button>
+          <button class="logo-pos-btn" data-pos="bottom-right"  onclick="setLogoPos('bottom-right')"  title="Bottom Right">↘</button>
+        </div>
+        <div style="margin-top:8px">
+          <div class="wm-section-label">Slide Preview</div>
+          <div class="logo-slide-preview" id="logo-slide-preview">
+            <img id="logo-preview-slide-img" alt="" style="width:100%;height:100%;object-fit:contain;display:block"/>
+            <div class="logo-preview-dot" id="logo-preview-dot"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Right: controls -->
+      <div class="logo-right-col">
+        <div class="field">
+          <label>Upload Logo</label>
+          <label class="btn btn-glass btn-sm" style="cursor:pointer;width:100%;justify-content:center">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:14px;height:14px"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M17 8l-5-5-5 5M12 3v12"/></svg>
+            <span id="logo-file-name">Choose image (PNG/SVG recommended)</span>
+            <input type="file" accept="image/*" id="logo-file-input" onchange="onLogoFileChange(this)" style="display:none">
+          </label>
+          <div class="logo-img-preview-wrap" id="logo-img-preview-wrap" style="display:none">
+            <img id="logo-img-preview" alt=""/>
+          </div>
+        </div>
+
+        <div class="field">
+          <label>Size <span class="range-val" id="logo-scale-val">20%</span></label>
+          <input type="range" class="zoom-slider" min="0.03" max="0.5" step="0.01" value="0.20"
+                 id="logo-scale" oninput="document.getElementById('logo-scale-val').textContent=Math.round(this.value*100)+'%'; updateLogoDot()" style="width:100%">
+        </div>
+
+        <div class="field">
+          <label>Opacity <span class="range-val" id="logo-opacity-val">100%</span></label>
+          <input type="range" class="zoom-slider" min="0.05" max="1" step="0.05" value="1"
+                 id="logo-opacity" oninput="document.getElementById('logo-opacity-val').textContent=Math.round(this.value*100)+'%'" style="width:100%">
+        </div>
+
+        <div class="field">
+          <label>Edge Padding <span class="range-val" id="logo-padding-val">20px</span></label>
+          <input type="range" class="zoom-slider" min="0" max="80" step="2" value="20"
+                 id="logo-padding" oninput="document.getElementById('logo-padding-val').textContent=this.value+'px'; updateLogoDot()" style="width:100%">
+        </div>
+
+        <div class="field">
+          <label>Apply To</label>
+          <div class="wm-segmented">
+            <button class="wm-seg" id="logo-scope-current" onclick="setLogoScope('current')">Current slide</button>
+            <button class="wm-seg active" id="logo-scope-all" onclick="setLogoScope('all')">All slides</button>
+          </div>
+        </div>
+
+        <div class="field" id="logo-skip-field">
+          <label>Skip slides <span style="color:var(--text3);font-weight:400;font-size:11px">(optional)</span></label>
+          <input type="text" id="logo-skip" placeholder="e.g. 1,3,5-8"
+                 style="width:100%;padding:6px 8px;background:var(--bg2);color:var(--text1);border:1px solid var(--border);border-radius:6px;font-size:13px">
+        </div>
+
+        <div class="wm-actions">
+          <button class="btn btn-glass btn-sm" onclick="closeLogoModal()">Cancel</button>
+          <button class="btn btn-primary btn-sm" onclick="applyLogo()" style="flex:1">Insert Logo</button>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Watermark Modal -->
+<div class="modal-backdrop" id="watermark-modal" onclick="if(event.target===this)closeWatermarkModal()">
+  <div class="modal-card wm-card">
+    <div class="wm-header">
+      <h3 style="margin:0">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+        Watermark Manager
+      </h3>
+      <button class="wm-close" onclick="closeWatermarkModal()" aria-label="Close">×</button>
+    </div>
+
+    <!-- Tabs -->
+    <div class="wm-tabs">
+      <button class="wm-tab active" id="wm-tab-add" onclick="switchWmTab('add')">Add</button>
+      <button class="wm-tab" id="wm-tab-detect" onclick="switchWmTab('detect')">Detect &amp; Remove</button>
+      <button class="wm-tab" id="wm-tab-applied" onclick="switchWmTab('applied')">Applied <span class="wm-applied-badge" id="wm-applied-badge" style="display:none">0</span></button>
+    </div>
+
+    <div class="wm-body">
+
+      <!-- ───── ADD TAB ─────────────────────────────────────────────────── -->
+      <div id="wm-panel-add">
+        <div class="wm-grid">
+          <!-- Left column: live preview -->
+          <div class="wm-preview-col">
+            <div class="wm-section-label">Live Preview</div>
+            <div class="wm-preview-box" id="wm-preview-box">
+              <img id="wm-preview-img" alt="" />
+              <div class="wm-preview-loader" id="wm-preview-loader"><div class="loading-spinner" style="width:24px;height:24px;border-width:2px"></div></div>
+            </div>
+            <div class="wm-preview-hint" id="wm-preview-hint">Showing slide <span id="wm-preview-num">1</span></div>
+          </div>
+
+          <!-- Right column: controls -->
+          <div class="wm-controls-col">
+            <!-- Type selector -->
+            <div class="field">
+              <label>Type</label>
+              <div class="wm-segmented">
+                <button class="wm-seg active" id="wm-type-text" onclick="setWmType('text')">Text</button>
+                <button class="wm-seg" id="wm-type-image" onclick="setWmType('image')">Image / Logo</button>
+              </div>
+            </div>
+
+            <!-- TEXT options -->
+            <div id="wm-text-options">
+              <div class="field">
+                <label>Watermark Text</label>
+                <input type="text" id="wm-text" maxlength="200" placeholder="CONFIDENTIAL" value="CONFIDENTIAL" oninput="schedulePreview()">
+              </div>
+              <div class="field-row">
+                <div class="field" style="flex:0 0 96px">
+                  <label>Color</label>
+                  <input type="color" id="wm-color" value="#808080" oninput="schedulePreview()" style="height:34px">
+                </div>
+                <div class="field" style="flex:1">
+                  <label>Font Size</label>
+                  <div class="wm-slider-row">
+                    <input type="range" class="zoom-slider" min="0.03" max="0.20" step="0.005" value="0.067" id="wm-font-scale" oninput="onFontScaleInput()" style="flex:1">
+                    <span class="range-val" id="wm-font-scale-val">6.7%</span>
+                  </div>
+                </div>
+              </div>
+              <div class="field">
+                <label>Rotation</label>
+                <div class="wm-slider-row">
+                  <input type="range" class="zoom-slider" min="-90" max="90" step="1" value="0" id="wm-rotation" oninput="onRotationInput()" style="flex:1">
+                  <span class="range-val" id="wm-rotation-val">0°</span>
+                  <button class="wm-mini-btn" onclick="setRotation(0)" title="Reset">0°</button>
+                  <button class="wm-mini-btn" onclick="setRotation(-45)" title="-45°">-45°</button>
+                  <button class="wm-mini-btn" onclick="setRotation(45)" title="+45°">45°</button>
+                </div>
+              </div>
+            </div>
+
+            <!-- IMAGE options -->
+            <div id="wm-image-options" style="display:none">
+              <div class="field">
+                <label>Upload Logo / Image</label>
+                <label class="btn btn-glass btn-sm" style="cursor:pointer;width:100%;justify-content:center">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:14px;height:14px"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M17 8l-5-5-5 5M12 3v12"/></svg>
+                  <span id="wm-image-name">Choose image</span>
+                  <input type="file" accept="image/*" id="wm-image-input" onchange="previewWmImage(this)" style="display:none">
+                </label>
+                <div class="wm-img-preview" id="wm-img-preview-wrap" style="display:none">
+                  <img id="wm-image-preview" alt=""/>
+                </div>
+              </div>
+              <div class="field">
+                <label>Scale</label>
+                <div class="wm-slider-row">
+                  <input type="range" class="zoom-slider" min="0.05" max="0.4" step="0.01" value="0.15" id="wm-scale" oninput="onImageScaleInput()" style="flex:1">
+                  <span class="range-val" id="wm-scale-val">15%</span>
+                </div>
+              </div>
+            </div>
+
+            <!-- Shared -->
+            <div class="field">
+              <label>Position</label>
+              <div class="wm-pos-grid" id="wm-pos-grid">
+                <button data-pos="top-left"    onclick="setPosition('top-left')"    title="Top Left">↖</button>
+                <button data-pos="top-right"   onclick="setPosition('top-right')"   title="Top Right">↗</button>
+                <button data-pos="center"      onclick="setPosition('center')" class="active" title="Center">●</button>
+                <button data-pos="bottom-left" onclick="setPosition('bottom-left')" title="Bottom Left">↙</button>
+                <button data-pos="bottom-right" onclick="setPosition('bottom-right')" title="Bottom Right">↘</button>
+                <button data-pos="tiled"       onclick="setPosition('tiled')"       title="Tiled / Repeat">▦</button>
+              </div>
+            </div>
+
+            <div class="field" id="wm-tile-spacing-field" style="display:none">
+              <label>Tile Spacing</label>
+              <div class="wm-slider-row">
+                <input type="range" class="zoom-slider" min="0.5" max="3" step="0.1" value="1" id="wm-tile-spacing" oninput="onTileSpacingInput()" style="flex:1">
+                <span class="range-val" id="wm-tile-spacing-val">1.0×</span>
+              </div>
+            </div>
+
+            <div class="field">
+              <label>Opacity</label>
+              <div class="wm-slider-row">
+                <input type="range" class="zoom-slider" min="0.05" max="1" step="0.05" value="0.15" id="wm-opacity" oninput="onOpacityInput()" style="flex:1">
+                <span class="range-val" id="wm-opacity-val">15%</span>
+              </div>
+            </div>
+
+            <div class="field">
+              <label>Apply To</label>
+              <div class="wm-segmented">
+                <button class="wm-seg" id="wm-scope-current" onclick="setWmScope('current')">Current slide</button>
+                <button class="wm-seg active" id="wm-scope-all" onclick="setWmScope('all')">All slides</button>
+              </div>
+            </div>
+
+            <div class="field" id="wm-skip-field">
+              <label>Skip slides <span style="color:var(--text3);font-weight:400;font-size:11px">(optional)</span></label>
+              <input type="text" id="wm-skip" placeholder="e.g. 2,4,7-9" style="width:100%;padding:6px 8px;background:var(--bg2);color:var(--text1);border:1px solid var(--border);border-radius:6px;font-size:13px">
+              <div style="font-size:11px;color:var(--text3);margin-top:3px">Comma-separated slide numbers or ranges. These slides won't get the watermark.</div>
+            </div>
+
+            <div class="wm-actions">
+              <button class="btn btn-glass btn-sm" onclick="closeWatermarkModal()">Cancel</button>
+              <button class="btn btn-primary btn-sm" id="wm-apply-btn" onclick="applyWatermark()" style="flex:1">Apply</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ───── APPLIED TAB ───────────────────────────────────────────── -->
+      <div id="wm-panel-applied" style="display:none">
+        <div class="wm-applied-header">
+          <div>
+            <div class="wm-section-label">Watermarks you've applied</div>
+            <div style="font-size:11px;color:var(--text3);margin-top:2px">Revert restores the slide images to before that operation.</div>
+          </div>
+          <button class="wm-link-btn" onclick="clearAppliedLog()" style="color:var(--red)">Clear log</button>
+        </div>
+        <div id="wm-applied-list" class="wm-applied-list"></div>
+      </div>
+
+      <!-- ───── DETECT TAB ────────────────────────────────────────────── -->
+      <div id="wm-panel-detect" style="display:none">
+        <div class="wm-grid">
+          <!-- Left: slide preview with overlay highlights -->
+          <div class="wm-preview-col">
+            <div class="wm-section-label">Slide <span id="wm-detect-num">1</span></div>
+            <div class="wm-preview-box wm-detect-preview" id="wm-detect-preview-box">
+              <img id="wm-detect-img" alt=""/>
+              <svg id="wm-detect-overlay" viewBox="0 0 100 100" preserveAspectRatio="none"></svg>
+              <div class="wm-draw-hint" id="wm-draw-hint" style="display:none">Click and drag to draw a region</div>
+            </div>
+            <div class="wm-preview-hint">
+              <button class="wm-link-btn" id="wm-draw-toggle" onclick="toggleDrawRegion()">+ Draw custom region</button>
+            </div>
+          </div>
+
+          <!-- Right: detection list -->
+          <div class="wm-controls-col">
+            <div class="wm-detect-toolbar">
+              <button class="btn btn-glass btn-sm" onclick="detectWatermarks()" id="wm-scan-btn">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:14px;height:14px"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+                Re-scan
+              </button>
+              <span class="wm-detect-count" id="wm-detect-count"></span>
+            </div>
+
+            <div id="wm-candidates" class="wm-candidates-list"></div>
+
+            <div class="wm-actions" id="wm-detect-actions" style="display:none">
+              <div class="checkbox-row" style="margin-right:auto">
+                <input type="checkbox" id="wm-select-all" onchange="toggleSelectAllCandidates()"> <label for="wm-select-all" style="font-size:11px;color:var(--text3);cursor:pointer">All</label>
+              </div>
+              <button class="btn btn-glass btn-sm" onclick="closeWatermarkModal()">Cancel</button>
+              <button class="btn btn-danger btn-sm" onclick="bulkRemove('current')">Remove from current</button>
+              <button class="btn btn-danger btn-sm" onclick="bulkRemove('all')">Remove from all</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+</div>
+
+<!-- Find & Replace Modal -->
+<div class="modal-backdrop" id="findreplace-modal" onclick="if(event.target===this)this.classList.remove('show')">
+  <div class="modal-card" style="position:relative">
+    <h3>
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+      Find & Replace
+    </h3>
+    <div class="field">
+      <label>Find</label>
+      <input type="text" id="fr-find" placeholder="Search text...">
+    </div>
+    <div class="field">
+      <label>Replace With</label>
+      <input type="text" id="fr-replace" placeholder="Replacement text...">
+    </div>
+    <button class="btn btn-primary btn-sm" style="width:100%" onclick="doFindReplace()">Replace All</button>
+    <div id="fr-result" style="margin-top:10px;font-size:12px;color:var(--text2);text-align:center"></div>
+  </div>
+</div>
+
+<!-- Version History Modal -->
+<div class="modal-backdrop" id="history-modal" onclick="if(event.target===this)this.classList.remove('show')">
+  <div class="modal-card" style="position:relative;min-width:420px">
+    <h3>
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12,6 12,12 16,14"/></svg>
+      Version History
+    </h3>
+    <button class="btn btn-primary btn-sm" style="width:100%;margin-bottom:12px" onclick="saveVersion()">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 21H5a2 2 0 01-2-2V5a2 2 0 012-2h11l5 5v11a2 2 0 01-2 2z"/><polyline points="17,21 17,13 7,13 7,21"/></svg>
+      Save Current Version
+    </button>
+    <div id="history-list">
+      <div class="empty-state" style="padding:16px">Loading...</div>
+    </div>
+  </div>
+</div>
+
+<!-- Templates Modal -->
+<div class="modal-backdrop" id="templates-modal" onclick="if(event.target===this)this.classList.remove('show')">
+  <div class="modal-card" style="position:relative;min-width:420px">
+    <h3>
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="9" y1="21" x2="9" y2="9"/></svg>
+      Templates
+    </h3>
+    <div style="display:flex;gap:6px;margin-bottom:12px">
+      <input type="text" id="tpl-name" placeholder="Template name..." style="flex:1;background:var(--surface);border:1px solid var(--glass-border);color:var(--text);padding:8px 12px;border-radius:var(--radius-xs);font-size:13px;font-family:inherit;outline:none">
+      <button class="btn btn-primary btn-sm" onclick="saveTemplate()">Save</button>
+    </div>
+    <div id="templates-list">
+      <div class="empty-state" style="padding:16px">Loading...</div>
+    </div>
+  </div>
+</div>
+
+<!-- Comment Input Popup (positioned absolutely near click) -->
+<div id="comment-popup" style="display:none;position:fixed;z-index:190;background:rgba(20,28,50,0.95);border:1px solid var(--glass-border-hover);border-radius:var(--radius-sm);padding:12px;box-shadow:var(--shadow-lg);min-width:220px">
+  <div class="field" style="margin-bottom:8px">
+    <input type="text" id="comment-input" placeholder="Add a comment..." style="font-size:13px">
+  </div>
+  <div style="display:flex;gap:6px">
+    <button class="btn btn-primary btn-sm" style="flex:1" onclick="submitComment()">Add</button>
+    <button class="btn btn-glass btn-sm" onclick="cancelComment()">Cancel</button>
+  </div>
+</div>
+
+<!-- Master Slide / Theme modal -->
+<div class="modal-backdrop" id="master-modal" onclick="if(event.target===this)this.classList.remove('show')">
+  <div class="modal-card" style="position:relative;min-width:420px">
+    <h3>
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="3" y1="9" x2="21" y2="9"/></svg>
+      Master Slide / Theme
+    </h3>
+    <div class="master-row">
+      <label for="master-header">Header text</label>
+      <input type="text" id="master-header" placeholder="e.g. Acme Inc. — Confidential">
+    </div>
+    <div class="master-row">
+      <label for="master-footer">Footer text</label>
+      <input type="text" id="master-footer" placeholder="e.g. Q4 2026">
+    </div>
+    <div class="master-row">
+      <label for="master-pagenum">Page numbers</label>
+      <input type="checkbox" id="master-pagenum">
+    </div>
+    <div class="master-row">
+      <label for="master-primary">Primary color</label>
+      <input type="color" id="master-primary" value="#2563EB">
+    </div>
+    <div class="master-row">
+      <label for="master-accent">Accent color</label>
+      <input type="color" id="master-accent" value="#A78BFA">
+    </div>
+    <div style="display:flex;gap:8px;margin-top:14px">
+      <button class="btn btn-primary btn-sm" style="flex:1" onclick="saveMasterSlide()">Save Theme</button>
+      <button class="btn btn-glass btn-sm" style="flex:1" onclick="applyMasterToAllSlides()">Apply to All Slides</button>
+    </div>
+  </div>
+</div>
+
+<!-- Floating align/distribute toolbar (shown when multi-select active) -->
+<div id="align-toolbar">
+  <button onclick="alignSelected('left')" title="Align left (Alt+←)">⇤ Left</button>
+  <button onclick="alignSelected('center-h')" title="Center horizontally">⇔ Center H</button>
+  <button onclick="alignSelected('right')" title="Align right (Alt+→)">⇥ Right</button>
+  <div class="sep"></div>
+  <button onclick="alignSelected('top')" title="Align top (Alt+↑)">⤒ Top</button>
+  <button onclick="alignSelected('center-v')" title="Center vertically">⇕ Center V</button>
+  <button onclick="alignSelected('bottom')" title="Align bottom (Alt+↓)">⤓ Bottom</button>
+  <div class="sep"></div>
+  <button onclick="alignSelected('distribute-h')" title="Distribute horizontally">↔ Distribute H</button>
+  <button onclick="alignSelected('distribute-v')" title="Distribute vertically">↕ Distribute V</button>
+  <div class="sep"></div>
+  <button onclick="toggleGuides()" title="Toggle guides (Ctrl+')">Guides</button>
+  <button onclick="deleteMultiSel()" title="Delete all selected">Delete</button>
+</div>
+<script>
+  // Show/hide the align toolbar based on multi-select state
+  setInterval(() => {
+    const bar = document.getElementById('align-toolbar');
+    if (!bar) return;
+    const n = (window.multiSel && window.multiSel.size) || 0;
+    bar.classList.toggle('show', n >= 2);
+  }, 300);
+</script>
+
+<!-- Toast -->
+<div id="toast">
+  <svg class="toast-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 11.08V12a10 10 0 11-5.93-9.14"/><polyline points="22,4 12,14.01 9,11.01"/></svg>
+  <span id="toast-msg">Saved!</span>
+</div>
+
+<script>window.NUM_SLIDES = {{ num_slides }};</script>
+<script src="{{ url_for('static', filename='js/app.js') }}?v=9"></script>
+<script src="{{ url_for('static', filename='js/features.js') }}?v=9"></script>
+</body>
+</html>

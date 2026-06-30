@@ -1,0 +1,61 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# Virtual environment
+venv/
+.venv/
+env/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# App data (auto-generated, user-specific)
+slide_data.json
+comments.json
+watermarks_applied.json
+master_slide.json
+cleared_orphans_before.txt
+static/slides/*.jpg
+static/slides/_originals/
+uploads/
+exports/
+videos/
+history/
+templates_saved/
+
+# Claude/agent local config
+.claude/
+
+# EasyOCR models (large, downloaded on first use)
+~/.EasyOCR/
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Temp files
+*.tmp
+_temp_*
+nul
+
+# AgentMaster cache
+.agentmaster/
+
+# Runtime state
+current_deck.txt
+
+# Test files
+test_*.pptx
+test_*.ppt
+pdf_text.json
+autosave.json
