@@ -980,7 +980,10 @@
   .list-item .list-item-actions { display: flex; gap: 4px; }
 
   /* ── Watermark Manager ──────────────────────────────────────────────── */
-  .wm-card { max-width: 880px; width: 95vw; padding: 0; overflow: hidden; }
+  .wm-card { max-width: 1400px; width: 96vw; padding: 0; overflow: hidden; display: flex; flex-direction: column; }
+  .wm-body { flex: 1; min-height: 0; overflow: auto; }
+  .wm-preview-box { min-height: 380px; }
+  .wm-detect-preview { min-height: 420px; }
   .wm-header {
     display: flex; align-items: center; justify-content: space-between;
     padding: 18px 22px 14px; border-bottom: 1px solid var(--glass-border);
@@ -1286,4 +1289,4 @@
     .thumb-item .num { font-size: 9px; padding: 1px 5px; }
   }
   .modal-card { max-height: 92dvh; }
-  .wm-card { max-height: 92dvh; }
+  .wm-card { max-height: 94dvh; min-height: 78dvh; }
