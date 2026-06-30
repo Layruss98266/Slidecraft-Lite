@@ -2659,6 +2659,19 @@ async function removeEdstellarText() {
       return;
     }
     if (data.slides_touched === 0) {
+      // Did anything fall through to OCR? If yes and OCR was unavailable,
+      // surface the install hint — the user is otherwise stuck.
+      if (data.ocr_unavailable_slides > 0) {
+        const probe = await fetch('/api/ocr-status').then(r => r.json()).catch(() => ({}));
+        const hint = probe.install_hint
+          || 'Install Tesseract: winget install UB-Mannheim.TesseractOCR';
+        showToast(
+          `Could not detect on ${data.ocr_unavailable_slides} slide(s). ` +
+          `PDF text layer missing and OCR is off.\n${hint}`,
+          'info', 9000
+        );
+        return;
+      }
       showToast(`No Edstellar text found in the top-left of any slide (scanned ${data.slides_scanned})`, 'info', 4000);
       return;
     }

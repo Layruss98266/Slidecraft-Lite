@@ -740,13 +740,95 @@ def _crop_has_ink(crop_bgr):
     return density >= _EDSTELLAR_EDGE_DENSITY_FLOOR
 
 
+def _consistent_tl_mark_bbox(slides, zone, cv2_mod, np_mod):
+    """OCR-free wordmark detector: scan the top-left zone across every slide
+    and find the bbox of pixels that are (a) low-variance across slides and
+    (b) darker than the surrounding background. Works because PPTX decks
+    generated from the same template have the wordmark in pixel-identical
+    position on every slide.
+
+    Returns a single (x1, y1, x2, y2) bbox in image coords of the FIRST
+    slide's coordinate system, or None if no consistent dark region exists."""
+    zx, zy, zw, zh = zone
+    # Sample up to 8 slides spread across the deck for the variance map.
+    n = len(slides)
+    if n < 2:
+        return None
+    idxs = list(range(n))
+    if n > 8:
+        step = max(1, n // 8)
+        idxs = idxs[::step][:8]
+
+    crops = []
+    ref_shape = None
+    for i in idxs:
+        img = cv2_mod.imread(str(slides[i]))
+        if img is None:
+            continue
+        h, w = img.shape[:2]
+        cx1, cy1 = int(zx * w), int(zy * h)
+        cx2, cy2 = int((zx + zw) * w), int((zy + zh) * h)
+        crop = img[cy1:cy2, cx1:cx2]
+        if crop.size == 0:
+            continue
+        if ref_shape is None:
+            ref_shape = (crop.shape[1], crop.shape[0])
+        elif (crop.shape[1], crop.shape[0]) != ref_shape:
+            crop = cv2_mod.resize(crop, ref_shape)
+        crops.append(crop)
+    if len(crops) < 2:
+        return None
+
+    stack = np_mod.stack([cv2_mod.cvtColor(c, cv2_mod.COLOR_BGR2GRAY) for c in crops]).astype(np_mod.float32)
+    # Per-pixel std across slides. Low std → identical across slides.
+    std  = stack.std(axis=0)
+    mean = stack.mean(axis=0)
+    # Mask: identical across slides AND meaningfully darker than slide bg.
+    # Threshold: pixel is "ink" if mean brightness < 180 (out of 255) and
+    # cross-slide std < 6 (very tight identical-across-slides match).
+    mask = ((std < 6.0) & (mean < 180.0)).astype(np_mod.uint8) * 255
+    # Morph clean-up to merge letter strokes into a solid blob.
+    k = max(2, ref_shape[0] // 80)
+    kernel = cv2_mod.getStructuringElement(cv2_mod.MORPH_RECT, (k, k))
+    mask = cv2_mod.dilate(mask, kernel, iterations=2)
+
+    # Want at least a minimal amount of ink to call this a wordmark.
+    if int((mask > 0).sum()) < (ref_shape[0] * ref_shape[1] * 0.005):
+        return None
+
+    ys, xs = np_mod.where(mask > 0)
+    if len(xs) == 0:
+        return None
+    x1, x2 = int(xs.min()), int(xs.max())
+    y1, y2 = int(ys.min()), int(ys.max())
+
+    # Translate from crop-local coords to first-slide absolute coords.
+    first = cv2_mod.imread(str(slides[idxs[0]]))
+    if first is None:
+        return None
+    H, W = first.shape[:2]
+    cx1, cy1 = int(zx * W), int(zy * H)
+    # If we resized to ref_shape, scale back to actual crop size on first slide.
+    crop_w_act = int((zx + zw) * W) - cx1
+    crop_h_act = int((zy + zh) * H) - cy1
+    sx = crop_w_act / float(ref_shape[0])
+    sy = crop_h_act / float(ref_shape[1])
+    bx1 = cx1 + int(x1 * sx); by1 = cy1 + int(y1 * sy)
+    bx2 = cx1 + int(x2 * sx); by2 = cy1 + int(y2 * sy)
+    return (bx1, by1, bx2, by2)
+
+
 @app.route("/api/remove-edstellar-text", methods=["POST"])
 def remove_edstellar_text():
     """Erase the 'Edstellar' wordmark from the top-left corner of every slide.
 
-    Prefers cached PDF text (free, instant). Falls back to Tesseract OCR if
-    installed. Non-PDF slides without Tesseract are reported in `skipped:
-    ocr-unavailable`; PDF and Tesseract-OCR'd slides process normally.
+    Three-tier detection:
+      1. Cached PDF text (instant, accurate — for PDF uploads)
+      2. Cross-slide pixel-similarity in the TL zone (OCR-free; catches the
+         wordmark on PPTX decks where it appears pixel-identical on every slide)
+      3. Tesseract OCR if installed (handles slides where the wordmark varies)
+
+    Slides where all three fail are reported in `skipped: ocr-unavailable`.
     """
     import cv2
     import numpy as np
@@ -762,6 +844,10 @@ def remove_edstellar_text():
             pdf_cache = json.loads(PDF_TEXT_FILE.read_text())
         except (OSError, ValueError):
             pdf_cache = {}
+
+    # Pre-compute the cross-slide TL bbox once. Reused for every slide that
+    # has no PDF text — most PPTX decks fall into this bucket.
+    consistent_bbox = _consistent_tl_mark_bbox(slides, _EDSTELLAR_TL_ZONE, cv2, np)
 
     # ─── Pass 1: load + classify each slide from PDF cache only
     per_slide = []  # list of dicts: {idx, path, img, h, w, hits}
@@ -785,8 +871,18 @@ def remove_edstellar_text():
             if x2 > x1 and y2 > y1:
                 hits.append((x1, y1, x2, y2))
 
-        # No PDF text for this slide → try Tesseract OCR on the top-left
-        # zone if available. If not, record the slide as skipped.
+        # Tier 2: cross-slide consistent bbox. Scale to this slide's size
+        # (slides are normally identical resolution, but be defensive).
+        if not hits and consistent_bbox is not None:
+            bx1, by1, bx2, by2 = consistent_bbox
+            # Confirm the ROI on THIS slide actually has ink — guards against
+            # the rare case of a title-only first slide that lacks the mark.
+            crop = img[max(0, by1):min(h, by2), max(0, bx1):min(w, bx2)]
+            if crop.size > 0 and _crop_has_ink(crop):
+                hits.append((max(0, bx1), max(0, by1), min(w, bx2), min(h, by2)))
+
+        # Tier 3: Tesseract OCR on the top-left zone if available.
+        # Record slide as skipped only when all three tiers fail.
         if not hits and not pdf_regions:
             if tesseract_available():
                 try:
