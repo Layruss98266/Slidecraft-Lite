@@ -37,6 +37,86 @@ def _ensure_dict(payload):
     """Return payload if dict, else empty dict."""
     return payload if isinstance(payload, dict) else {}
 
+# ── Optional Tesseract OCR ──────────────────────────────────────────────────
+# pytesseract is a ~50 KB wrapper. It needs the Tesseract.exe binary to be on
+# PATH — install separately (winget install UB-Mannheim.TesseractOCR etc).
+# Both checks are lazy and never crash startup.
+import importlib.util as _importlib_util
+HAS_PYTESS = _importlib_util.find_spec("pytesseract") is not None
+_tess_checked = False
+_tess_ok = False
+_tess_install_hint = (
+    "Tesseract binary not found on PATH. Install:\n"
+    "  Windows: winget install UB-Mannheim.TesseractOCR\n"
+    "  Mac:     brew install tesseract\n"
+    "  Linux:   apt install tesseract-ocr"
+)
+
+
+def tesseract_available():
+    """Return True only if BOTH pytesseract and the tesseract.exe binary
+    are usable. Cached after the first probe so we don't pay the subprocess
+    cost on every request."""
+    global _tess_checked, _tess_ok
+    if _tess_checked:
+        return _tess_ok
+    _tess_checked = True
+    if not HAS_PYTESS:
+        return False
+    try:
+        import pytesseract
+        pytesseract.get_tesseract_version()
+        _tess_ok = True
+    except Exception:
+        _tess_ok = False
+    return _tess_ok
+
+
+def _tess_ocr_image(pil_img, min_conf=55):
+    """Run Tesseract on a Pillow image and return a list of region dicts in
+    the same shape as the watermark/Edstellar detector expects:
+        {text, x, y, w, h, conf, fontSize, color}
+    Coords are normalized to [0, 1]. Empty list on any error."""
+    if not tesseract_available():
+        return []
+    try:
+        import pytesseract
+        from pytesseract import Output
+    except Exception:
+        return []
+    try:
+        data = pytesseract.image_to_data(pil_img, output_type=Output.DICT)
+    except Exception:
+        return []
+    iw, ih = pil_img.size
+    if iw == 0 or ih == 0:
+        return []
+    regions = []
+    for i, txt in enumerate(data.get("text", [])):
+        t = (txt or "").strip()
+        if not t:
+            continue
+        try:
+            conf = float(data["conf"][i])
+        except (ValueError, KeyError, IndexError):
+            conf = 0.0
+        if conf < min_conf:
+            continue
+        try:
+            x, y, w, h = data["left"][i], data["top"][i], data["width"][i], data["height"][i]
+        except (KeyError, IndexError):
+            continue
+        regions.append({
+            "text": t,
+            "x": x / iw, "y": y / ih,
+            "w": w / iw, "h": h / ih,
+            "conf": round(conf, 1),
+            "fontSize": 0,            # tesseract doesn't surface a font size
+            "color":    "#000000",
+        })
+    return regions
+
+
 app = Flask(__name__)
 # Default upload cap is 1 GB so the bulk endpoint comfortably accepts 20 PPTX
 # files even when individual files run heavy (~30-50 MB with embedded video).
@@ -285,13 +365,14 @@ def process_uploaded_pptx(pptx_path):
     PDF_TEXT_FILE.unlink(missing_ok=True)
 
 
-def process_uploaded_pdf(pdf_path):
+def process_uploaded_pdf(pdf_path, page_range=None):
     """Render PDF pages directly to slide JPGs. Same atomic stage/swap as PPTX.
     Also extracts a per-page text layer so the editor can offer instant
-    click-to-edit on real text (no OCR roundtrip)."""
-    _stage_and_swap(lambda stage_dir: _render_pdf_to_images(pdf_path, stage_dir))
+    click-to-edit on real text (no OCR roundtrip).
+    page_range: optional '1-5,8,11-13' string. None = all pages."""
+    _stage_and_swap(lambda stage_dir: _render_pdf_to_images(pdf_path, stage_dir, page_range))
     try:
-        text_map = _extract_pdf_text_layer(pdf_path)
+        text_map = _extract_pdf_text_layer(pdf_path, page_range)
         PDF_TEXT_FILE.write_text(json.dumps(text_map))
     except Exception as e:
         # Text-layer is a nice-to-have; never fail the upload over it.
@@ -299,15 +380,24 @@ def process_uploaded_pdf(pdf_path):
         PDF_TEXT_FILE.unlink(missing_ok=True)
 
 
-def _extract_pdf_text_layer(pdf_path):
+def _extract_pdf_text_layer(pdf_path, page_range=None):
     """Return {slide_num_str: [region, ...]} where region matches the OCR
     endpoint shape: {text, x, y, w, h, fontSize, color}. Coords are normalized
-    to page size. Empty list per page means a pure-image PDF (no text layer)."""
+    to page size. Empty list per page means a pure-image PDF (no text layer).
+    page_range: optional list of 1-based pages or '1-5,8' string. Slide numbers
+    in the output are 1-based positions in the rendered subset, NOT original
+    PDF page numbers — so they match slide-NNN.jpg filenames."""
     import fitz
     out = {}
     doc = fitz.open(str(pdf_path))
     try:
-        for i, page in enumerate(doc):
+        n = doc.page_count
+        pages = _parse_page_range(page_range, n) if isinstance(page_range, str) else page_range
+        if not pages:
+            pages = list(range(1, n + 1))
+        for slide_idx, page_num in enumerate(pages, start=1):
+            page = doc.load_page(page_num - 1)
+            i = slide_idx - 1  # keep existing index var for diff stability
             pw, ph = page.rect.width, page.rect.height
             if pw <= 0 or ph <= 0:
                 out[str(i + 1)] = []
@@ -417,8 +507,34 @@ def _convert_pptx_to_images_libreoffice(pptx_path, output_dir=None):
         shutil.rmtree(tmp_dir, ignore_errors=True)
 
 
-def _render_pdf_to_images(pdf_path, output_dir):
-    """Render every page of a PDF to slide-NNN.jpg in output_dir."""
+def _parse_page_range(spec, max_page):
+    """Parse '1-5,8,11-13' into a sorted list of 1-based page numbers within
+    [1, max_page]. Returns None for empty/invalid spec — caller renders all."""
+    if not spec or not isinstance(spec, str):
+        return None
+    pages = set()
+    for chunk in spec.replace(" ", "").split(","):
+        if not chunk:
+            continue
+        if "-" in chunk:
+            a, _, b = chunk.partition("-")
+            if not a.isdigit() or not b.isdigit():
+                continue
+            lo, hi = int(a), int(b)
+            if lo > hi:
+                lo, hi = hi, lo
+            for p in range(max(1, lo), min(max_page, hi) + 1):
+                pages.add(p)
+        elif chunk.isdigit():
+            p = int(chunk)
+            if 1 <= p <= max_page:
+                pages.add(p)
+    return sorted(pages) if pages else None
+
+
+def _render_pdf_to_images(pdf_path, output_dir, page_range=None):
+    """Render PDF pages to slide-NNN.jpg in output_dir.
+    page_range: optional list of 1-based page numbers to render. None = all."""
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     import fitz
@@ -427,14 +543,18 @@ def _render_pdf_to_images(pdf_path, output_dir):
         n = doc.page_count
         if n == 0:
             raise RuntimeError("PDF has no pages")
-        if n > MAX_PDF_PAGES:
+        pages = _parse_page_range(page_range, n) if isinstance(page_range, str) else page_range
+        if not pages:
+            pages = list(range(1, n + 1))
+        if len(pages) > MAX_PDF_PAGES:
             raise RuntimeError(
-                f"PDF has {n} pages — limit is {MAX_PDF_PAGES}. "
-                f"Split the file or raise MAX_PDF_PAGES.")
+                f"Requested {len(pages)} pages — limit is {MAX_PDF_PAGES}. "
+                f"Use a narrower range or raise MAX_PDF_PAGES.")
         mat = fitz.Matrix(2.5, 2.5)  # 2.5× scale ≈ 240 DPI — sharper text/edges
-        for i, page in enumerate(doc):
+        for out_idx, page_num in enumerate(pages, start=1):
+            page = doc.load_page(page_num - 1)
             pix = page.get_pixmap(matrix=mat, alpha=False)
-            (output_dir / f"slide-{i+1:03d}.jpg").write_bytes(
+            (output_dir / f"slide-{out_idx:03d}.jpg").write_bytes(
                 pix.tobytes("jpeg", jpg_quality=97))
             pix = None  # release ~7-10 MB pixmap before the next iteration
     finally:
@@ -457,6 +577,86 @@ def get_slide(num):
     data = load_data()
     return jsonify(data.get(str(num), {"overlays": [], "notes": ""}))
 
+
+@app.route("/api/ocr-status", methods=["GET"])
+def ocr_status():
+    """Tell the UI whether OCR is wired up."""
+    ok = tesseract_available()
+    return jsonify({"available": ok,
+                    "engine": "tesseract" if ok else None,
+                    "install_hint": None if ok else _tess_install_hint})
+
+
+@app.route("/api/ocr/<int:num>", methods=["POST"])
+def ocr_slide(num):
+    """OCR a single slide. Prefers cached PDF text (free, instant); falls
+    back to Tesseract on image-only slides."""
+    slide_files = _get_slide_files()
+    if num < 1 or num > len(slide_files):
+        return jsonify({"error": "Invalid slide"}), 400
+
+    # Prefer PDF text-layer cache
+    if PDF_TEXT_FILE.exists():
+        try:
+            cache = json.loads(PDF_TEXT_FILE.read_text())
+            regions = cache.get(str(num)) or []
+            if regions:
+                return jsonify({"regions": regions, "source": "pdf"})
+        except (OSError, ValueError):
+            pass
+
+    if not tesseract_available():
+        return jsonify({"regions": [], "source": "unavailable",
+                        "error": "OCR not installed",
+                        "install_hint": _tess_install_hint}), 200
+
+    try:
+        with Image.open(slide_files[num - 1]) as pil:
+            regions = _tess_ocr_image(pil.convert("RGB"))
+    except Exception as e:
+        return jsonify({"error": f"OCR failed: {e}"}), 500
+    return jsonify({"regions": regions, "source": "ocr"})
+
+
+@app.route("/api/ocr-all", methods=["POST"])
+def ocr_all_slides():
+    """OCR every slide. Uses PDF cache wherever available, Tesseract otherwise."""
+    slide_files = _get_slide_files()
+    if not slide_files:
+        return jsonify({"regions_by_slide": {}, "total": 0, "source": "empty"})
+
+    pdf_cache = {}
+    if PDF_TEXT_FILE.exists():
+        try:
+            pdf_cache = json.loads(PDF_TEXT_FILE.read_text())
+        except (OSError, ValueError):
+            pdf_cache = {}
+
+    out = {}
+    used_pdf = used_ocr = 0
+    for i, sf in enumerate(slide_files, start=1):
+        cached = pdf_cache.get(str(i)) or []
+        if cached:
+            out[str(i)] = cached
+            used_pdf += 1
+            continue
+        if tesseract_available():
+            try:
+                with Image.open(sf) as pil:
+                    out[str(i)] = _tess_ocr_image(pil.convert("RGB"))
+                    used_ocr += 1
+            except Exception:
+                out[str(i)] = []
+        else:
+            out[str(i)] = []
+    total = sum(len(v) for v in out.values())
+    if used_pdf and used_ocr: src = "mixed"
+    elif used_pdf:            src = "pdf"
+    elif used_ocr:            src = "ocr"
+    else:                     src = "unavailable"
+    return jsonify({"regions_by_slide": out, "total": total, "source": src})
+
+
 @app.route("/api/upload", methods=["POST"])
 def upload_pptx():
     """Upload a PPTX or PDF file and convert to slide images."""
@@ -475,11 +675,14 @@ def upload_pptx():
     save_path = UPLOAD_DIR / secure_filename(f.filename)
     f.save(str(save_path))
 
+    # Optional 'pages' form field: '1-5,8,11-13'. Only honoured for PDFs.
+    page_range = (request.form.get("pages") or "").strip() or None
+
     try:
         if kind == "pptx":
             process_uploaded_pptx(save_path)
         else:
-            process_uploaded_pdf(save_path)
+            process_uploaded_pdf(save_path, page_range)
     except Exception as e:
         print(f"[upload] processing error: {e}", file=sys.stderr)
         try:
@@ -541,9 +744,9 @@ def _crop_has_ink(crop_bgr):
 def remove_edstellar_text():
     """Erase the 'Edstellar' wordmark from the top-left corner of every slide.
 
-    PDF-cache only (this build ships without EasyOCR). For non-PDF slides
-    the response reports `skipped: ocr-unavailable` for that slide but the
-    loop still processes any PDF slides successfully.
+    Prefers cached PDF text (free, instant). Falls back to Tesseract OCR if
+    installed. Non-PDF slides without Tesseract are reported in `skipped:
+    ocr-unavailable`; PDF and Tesseract-OCR'd slides process normally.
     """
     import cv2
     import numpy as np
@@ -582,9 +785,31 @@ def remove_edstellar_text():
             if x2 > x1 and y2 > y1:
                 hits.append((x1, y1, x2, y2))
 
-        # No PDF cache for this slide → we would have OCR'd. Skip, count it.
+        # No PDF text for this slide → try Tesseract OCR on the top-left
+        # zone if available. If not, record the slide as skipped.
         if not hits and not pdf_regions:
-            ocr_unavailable += 1
+            if tesseract_available():
+                try:
+                    from PIL import Image as _PILImg
+                    crop_x1 = int(zx * w);          crop_y1 = int(zy * h)
+                    crop_x2 = int((zx + zw) * w);   crop_y2 = int((zy + zh) * h)
+                    crop = img[crop_y1:crop_y2, crop_x1:crop_x2]
+                    if crop.size > 0:
+                        pil = _PILImg.fromarray(cv2.cvtColor(crop, cv2.COLOR_BGR2RGB))
+                        regs = _tess_ocr_image(pil, min_conf=50)
+                        for r in regs:
+                            if not _EDSTELLAR_RE.search(r.get("text", "")):
+                                continue
+                            x1 = crop_x1 + int(r["x"] * (crop_x2 - crop_x1))
+                            y1 = crop_y1 + int(r["y"] * (crop_y2 - crop_y1))
+                            x2 = crop_x1 + int((r["x"] + r["w"]) * (crop_x2 - crop_x1))
+                            y2 = crop_y1 + int((r["y"] + r["h"]) * (crop_y2 - crop_y1))
+                            if x2 > x1 and y2 > y1:
+                                hits.append((x1, y1, x2, y2))
+                except Exception:
+                    pass
+            if not hits:
+                ocr_unavailable += 1
 
         per_slide.append({"idx": i, "path": path, "img": img, "h": h, "w": w, "hits": hits})
 
@@ -1681,6 +1906,19 @@ def duplicate_slide(num):
                     "snapshot": snapshot, "log_id": log_id})
 
 
+@app.route("/api/slide/<int:num>/original.jpg", methods=["GET"])
+def get_original_slide(num):
+    """Serve the pristine pre-edit copy of slide N from _originals/.
+    Used by the before/after compare slider. Returns 404 if no backup exists
+    (e.g. a freshly uploaded deck before any destructive op)."""
+    src = ORIGINALS_DIR / f"slide-{num:03d}.jpg"
+    if not src.exists():
+        return jsonify({"error": "No original on file"}), 404
+    resp = make_response(send_file(str(src), mimetype="image/jpeg"))
+    resp.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+    return resp
+
+
 @app.route("/api/slide/<int:num>/download.png", methods=["GET"])
 def download_slide_png(num):
     """Convert the slide JPG to PNG and serve as an attachment."""
@@ -2447,14 +2685,26 @@ _DOMAIN_RE = re.compile(r"\b[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?"
 _EMAIL_RE  = re.compile(r"[\w.+-]+@[\w-]+\.[\w.-]+", re.IGNORECASE)
 
 
-def _classify_text_hit(text):
+def _classify_text_hit(text, extra_keywords=None):
     """Return (label, confidence) if `text` looks like a brand/URL/email
-    watermark, else None. Higher confidence = stronger signal."""
+    watermark, else None. Higher confidence = stronger signal.
+    extra_keywords: optional list of per-request keywords merged with the
+    env-var defaults (case-insensitive, deduped)."""
     t = (text or "").strip()
     if not t:
         return None
     low = t.lower()
-    for kw in WATERMARK_BRAND_KEYWORDS:
+    keywords = WATERMARK_BRAND_KEYWORDS
+    if extra_keywords:
+        merged = list(WATERMARK_BRAND_KEYWORDS)
+        for kw in extra_keywords:
+            if not isinstance(kw, str):
+                continue
+            k = kw.strip().lower()
+            if k and k not in merged:
+                merged.append(k)
+        keywords = merged
+    for kw in keywords:
         if kw and kw in low:
             return (f'brand: "{kw}"', 95.0)
     if _URL_RE.search(t):
@@ -2466,11 +2716,11 @@ def _classify_text_hit(text):
     return None
 
 
-def _find_text_watermark_candidates(slide_idx):
-    """Scan one slide's text (PDF cache only — this build ships without OCR)
-    for brand keywords and links. Returns watermark-candidate dicts in the
-    same shape as the corner-similarity detector. Returns [] when no PDF
-    cache exists for the slide."""
+def _find_text_watermark_candidates(slide_idx, extra_keywords=None):
+    """Scan one slide's text for brand keywords / links. Returns watermark-
+    candidate dicts in the same shape as the corner-similarity detector.
+    Prefers cached PDF text; falls back to Tesseract OCR when available;
+    returns [] for image-only slides without Tesseract."""
     slide_files = _get_slide_files()
     if slide_idx < 0 or slide_idx >= len(slide_files):
         return []
@@ -2484,9 +2734,17 @@ def _find_text_watermark_candidates(slide_idx):
         except (OSError, ValueError):
             regions = []
 
+    # No PDF text → try Tesseract OCR on the slide image.
+    if not regions and tesseract_available():
+        try:
+            with Image.open(slide_files[slide_idx]) as pil:
+                regions = _tess_ocr_image(pil.convert("RGB"), min_conf=50)
+        except Exception:
+            regions = []
+
     hits = []
     for r in regions:
-        cls = _classify_text_hit(r.get("text", ""))
+        cls = _classify_text_hit(r.get("text", ""), extra_keywords)
         if not cls:
             continue
         label, conf = cls
@@ -2558,6 +2816,13 @@ def detect_watermark(num):
     """
     import cv2
     import numpy as np
+
+    payload = _ensure_dict(request.get_json(force=True, silent=True))
+    extra_kw = payload.get("extra_keywords") or []
+    if isinstance(extra_kw, str):
+        extra_kw = [s.strip() for s in extra_kw.split(",") if s.strip()]
+    if not isinstance(extra_kw, list):
+        extra_kw = []
 
     slide_files = _get_slide_files()
     if num < 1 or num > len(slide_files):
@@ -2634,7 +2899,7 @@ def detect_watermark(num):
 
     # Also flag any text on this slide that looks like a brand wordmark, URL,
     # email, or domain. Reuses cached PDF text where present, else OCR.
-    text_hits = _find_text_watermark_candidates(num - 1)
+    text_hits = _find_text_watermark_candidates(num - 1, extra_kw)
     candidates.extend(text_hits)
     candidates = _dedup_candidates(candidates)
     candidates.sort(key=lambda c: c["confidence"], reverse=True)
@@ -3184,8 +3449,9 @@ def ops_redo():
 
 @app.route("/api/folder/remove-logo", methods=["POST"])
 def folder_remove_logo():
-    """Process every .pptx in a local folder: strip the NotebookLM logo and
-    write the cleaned file to '<folder>/Slides Final/<name>.pptx'.
+    """Process every .pptx and .pdf in a local folder: strip the NotebookLM
+    logo and write the cleaned file to '<folder>/Slides Final/<name>.<ext>'.
+    PPTX in → PPTX out; PDF in → PDF out.
 
     Body: {"folder": "<abs path>", "overwrite": bool (optional, default False),
            "recursive": bool (optional, default False)}
@@ -3216,17 +3482,19 @@ def folder_remove_logo():
     overwrite = bool(payload.get("overwrite", False))
 
     out_dir = src / "Slides Final"
-    pattern = "**/*.pptx" if recursive else "*.pptx"
-    pptx_files = sorted(
-        p for p in src.glob(pattern)
+    # Accept both .pptx and .pdf
+    patterns = ("**/*.pptx", "**/*.pdf") if recursive else ("*.pptx", "*.pdf")
+    deck_files = sorted({
+        p for pat in patterns for p in src.glob(pat)
         if p.is_file() and out_dir not in p.parents and p.parent != out_dir
-    )
-    if not pptx_files:
-        return jsonify({"error": "No .pptx files found in folder",
+    })
+    pptx_files = deck_files  # keep var name for diff stability
+    if not deck_files:
+        return jsonify({"error": "No .pptx or .pdf files found in folder",
                         "folder": str(src)}), 404
 
     out_dir.mkdir(exist_ok=True)
-    total = len(pptx_files)
+    total = len(deck_files)
 
     def _emit(obj):
         return (json.dumps(obj) + "\n").encode("utf-8")
@@ -3255,7 +3523,11 @@ def folder_remove_logo():
             try:
                 file_slides_dir = tmp_dir / "slides"
                 file_slides_dir.mkdir()
-                _convert_pptx_to_images_libreoffice(input_path, file_slides_dir)
+                ext = input_path.suffix.lower()
+                if ext == ".pdf":
+                    _render_pdf_to_images(input_path, file_slides_dir)
+                else:
+                    _convert_pptx_to_images_libreoffice(input_path, file_slides_dir)
 
                 slide_images = sorted(file_slides_dir.glob("slide-*.jpg"))
                 if not slide_images:
@@ -3266,7 +3538,10 @@ def folder_remove_logo():
                     continue
 
                 remove_logos_batch(slide_images)
-                _rebuild_pptx_from_images(slide_images, output_path)
+                if ext == ".pdf":
+                    _rebuild_pdf_from_images(slide_images, output_path)
+                else:
+                    _rebuild_pptx_from_images(slide_images, output_path)
                 ok += 1
                 yield _emit({"type": "file", "index": i, "total": total,
                              "file": fname, "status": "ok",
@@ -3303,6 +3578,21 @@ def _rebuild_pptx_from_images(slide_images, output_path):
         slide.shapes._spTree.remove(pic._element)
         slide.shapes._spTree.insert(2, pic._element)
     prs.save(str(output_path))
+
+
+def _rebuild_pdf_from_images(slide_images, output_path):
+    """Rebuild a PDF from slide JPGs — one page per image, full-bleed."""
+    import fitz
+    doc = fitz.open()
+    try:
+        for sf in slide_images:
+            with Image.open(sf) as im:
+                w, h = im.size
+            page = doc.new_page(width=w, height=h)
+            page.insert_image(fitz.Rect(0, 0, w, h), filename=str(sf))
+        doc.save(str(output_path), garbage=4, deflate=True)
+    finally:
+        doc.close()
 
 
 # ── Templates ───────────────────────────────────────────────────────────────

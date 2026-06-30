@@ -9,8 +9,16 @@ opencv-python-headless>=4.8
 numpy>=1.24
 PyMuPDF                              # PDF→JPG render + text-layer extract (no external binary)
 qrcode[pil]                          # Insert → Icon (QR overlay)
+pytesseract                          # ~50 KB wrapper. Needs the Tesseract binary
+                                     # to actually run OCR — see notes below.
 
 # Optional — only needed for PPTX→PDF export (PDF→anything works without it):
 #   Windows: winget install TheDocumentFoundation.LibreOffice
 #   Mac:     brew install --cask libreoffice
 #   Linux:   apt install libreoffice
+#
+# Optional Tesseract OCR — only needed for OCR on image-PPTX (PDFs use the
+# text-layer cache and don't need this). ~80 MB system binary, NOT pip.
+#   Windows: winget install UB-Mannheim.TesseractOCR
+#   Mac:     brew install tesseract
+#   Linux:   apt install tesseract-ocr

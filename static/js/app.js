@@ -1775,12 +1775,40 @@ async function exportPDF() {
 }
 
 // ══════════════════════════════════════════════════════════════════════════
-// OCR TEXT DETECTION — removed in Lite (no easyocr). Stubs keep call sites alive.
+// OCR TEXT DETECTION — PDF text cache first, Tesseract fallback when installed
 // ══════════════════════════════════════════════════════════════════════════
-function _ocrUnavailable() {
-  showToast('OCR not available in Lite build. Use a PDF deck for text removal.', 'info', 3500);
+async function detectText() {
+  ocrRegionsBySlide = null;
+  showLoading('Detecting text...');
+  try {
+    const resp = await fetch(`/api/ocr/${currentSlide}`, { method: 'POST' });
+    const data = await resp.json();
+    hideLoading();
+    if (data.error || (data.source === 'unavailable')) {
+      const hint = data.install_hint || data.error || 'OCR not available';
+      showToast(hint, 'info', 6500);
+      return;
+    }
+    if (Array.isArray(data.regions) && data.regions.length > 0) {
+      ocrRegions = data.regions.map(r => ({
+        text: r.text, x: r.x, y: r.y, w: r.w, h: r.h,
+        conf: r.conf != null ? r.conf : 100,
+        fontSize: r.fontSize, color: r.color,
+      }));
+      const btn = document.getElementById('btn-clear-ocr');
+      if (btn) btn.style.display = '';
+      renderOverlays();
+      const label = data.source === 'pdf' ? 'PDF text' : 'text regions';
+      showToast(`Detected ${data.regions.length} ${label}`, 'info');
+    } else {
+      showToast('No text detected on this slide', 'info');
+    }
+  } catch (e) {
+    hideLoading();
+    showToast('Text detection failed: ' + e.message, 'error');
+  }
 }
-async function detectText() { _ocrUnavailable(); }
+
 function clearOCR() {
   ocrRegions = [];
   ocrRegionsBySlide = null;
@@ -1788,7 +1816,43 @@ function clearOCR() {
   if (btn) btn.style.display = 'none';
   renderOverlays();
 }
-async function detectTextAll() { _ocrUnavailable(); }
+
+async function detectTextAll() {
+  showLoading('Detecting text across every slide…');
+  try {
+    const resp = await fetch('/api/ocr-all', { method: 'POST' });
+    const data = await resp.json();
+    hideLoading();
+    if (data.error) { showToast(data.error, 'error'); return; }
+    if (data.source === 'unavailable') {
+      showToast('OCR not available — install Tesseract or upload a PDF.', 'info', 6500);
+      return;
+    }
+    const map = data.regions_by_slide || {};
+    const normalize = arr => (arr || []).map(r => ({
+      text: r.text, x: r.x, y: r.y, w: r.w, h: r.h,
+      conf: r.conf != null ? r.conf : 100,
+      fontSize: r.fontSize, color: r.color,
+    }));
+    ocrRegionsBySlide = {};
+    Object.keys(map).forEach(k => { ocrRegionsBySlide[k] = normalize(map[k]); });
+    ocrRegions = ocrRegionsBySlide[String(currentSlide)] || [];
+    const total = data.total || 0;
+    if (total > 0) {
+      const btn = document.getElementById('btn-clear-ocr');
+      if (btn) btn.style.display = '';
+    }
+    const srcLabel = data.source === 'pdf'   ? 'PDF text'
+                   : data.source === 'mixed' ? 'PDF text + OCR'
+                   : 'text regions';
+    renderOverlays();
+    showToast(`Detected ${total} ${srcLabel} across ${Object.keys(map).length} slides`, 'info', 3500);
+  } catch (e) {
+    hideLoading();
+    showToast('Text detection failed: ' + e.message, 'error');
+  }
+}
+
 async function removeBgFromSelected() {
   showToast('Background-removal not available in Lite build.', 'info', 3000);
 }
@@ -2090,7 +2154,7 @@ function _fpAddLine(file, status, extra) {
 async function folderRemoveLogo() {
   const last = localStorage.getItem('folderRemoveLogo:lastPath') || '';
   const folder = prompt(
-    'Enter the full path of the folder containing your PPTX files.\n' +
+    'Enter the full path of the folder containing your PPTX or PDF files.\n' +
     'Cleaned files will be written to "<folder>\\Slides Final".',
     last
   );
@@ -2181,15 +2245,177 @@ async function folderRemoveLogo() {
   }
 }
 
+// ── Before / After compare slider ─────────────────────────────────────────
+let _compareDragging = false;
+
+function openCompareModal() {
+  const modal = document.getElementById('compare-modal');
+  if (!modal) return;
+  const num = typeof currentSlide === 'number' ? currentSlide : 1;
+  const padded = String(num).padStart(3, '0');
+  document.getElementById('compare-slide-num').textContent = num;
+
+  const after  = document.getElementById('compare-after');
+  const before = document.getElementById('compare-before');
+  const empty  = document.getElementById('compare-empty');
+  const frame  = document.getElementById('compare-frame');
+
+  // Bypass browser cache so re-opening after a fresh edit shows new pixels.
+  const stamp = Date.now();
+  after.src  = `/static/slides/slide-${padded}.jpg?t=${stamp}`;
+  before.src = `/api/slide/${num}/original.jpg?t=${stamp}`;
+
+  // Reset slider position
+  _setComparePosition(50);
+
+  // Hide the frame if no original exists yet.
+  empty.style.display = 'none';
+  frame.style.display = '';
+  before.onerror = () => { frame.style.display = 'none'; empty.style.display = ''; };
+
+  modal.classList.add('show');
+}
+
+function closeCompareModal() {
+  document.getElementById('compare-modal')?.classList.remove('show');
+}
+
+function _setComparePosition(pct) {
+  pct = Math.max(0, Math.min(100, pct));
+  const wrap   = document.getElementById('compare-before-wrap');
+  const handle = document.getElementById('compare-handle');
+  if (!wrap || !handle) return;
+  wrap.style.width = pct + '%';
+  handle.style.left = pct + '%';
+}
+
+function _compareMove(ev) {
+  if (!_compareDragging) return;
+  const frame = document.getElementById('compare-frame');
+  if (!frame) return;
+  const rect = frame.getBoundingClientRect();
+  const x = (ev.touches ? ev.touches[0].clientX : ev.clientX) - rect.left;
+  _setComparePosition((x / rect.width) * 100);
+  ev.preventDefault();
+}
+
+document.addEventListener('mousedown', ev => {
+  if (ev.target.closest && ev.target.closest('#compare-handle')) {
+    _compareDragging = true;
+    ev.preventDefault();
+  }
+});
+document.addEventListener('touchstart', ev => {
+  if (ev.target.closest && ev.target.closest('#compare-handle')) {
+    _compareDragging = true;
+  }
+}, { passive: true });
+document.addEventListener('mousemove', _compareMove);
+document.addEventListener('touchmove', _compareMove, { passive: false });
+document.addEventListener('mouseup',   () => { _compareDragging = false; });
+document.addEventListener('touchend',  () => { _compareDragging = false; });
+
+// Also support clicking anywhere on the frame to snap the divider there
+document.addEventListener('click', ev => {
+  const frame = ev.target.closest && ev.target.closest('#compare-frame');
+  if (!frame) return;
+  if (ev.target.closest('#compare-handle')) return;
+  const rect = frame.getBoundingClientRect();
+  _setComparePosition(((ev.clientX - rect.left) / rect.width) * 100);
+});
+
+// ── Recent files (localStorage, last 5) ───────────────────────────────────
+const _RECENT_KEY = 'slidecraft.recentFiles';
+const _RECENT_MAX = 5;
+
+function _readRecentFiles() {
+  try {
+    const raw = localStorage.getItem(_RECENT_KEY);
+    const arr = raw ? JSON.parse(raw) : [];
+    return Array.isArray(arr) ? arr : [];
+  } catch (_) { return []; }
+}
+
+function _recordRecentFile(name) {
+  if (!name) return;
+  const list = _readRecentFiles().filter(n => n !== name);
+  list.unshift(name);
+  localStorage.setItem(_RECENT_KEY, JSON.stringify(list.slice(0, _RECENT_MAX)));
+  _renderRecentFiles();
+}
+
+function _renderRecentFiles() {
+  const wrap = document.getElementById('recent-files-wrap');
+  const menu = document.getElementById('recent-menu');
+  if (!wrap || !menu) return;
+  const list = _readRecentFiles();
+  if (!list.length) { wrap.style.display = 'none'; return; }
+  wrap.style.display = '';
+  menu.innerHTML = list.map(n =>
+    `<button class="recent-item" onclick="_pickRecent(${JSON.stringify(n).replace(/"/g,'&quot;')})">` +
+    `<span class="recent-name">${escapeHtml(n)}</span></button>`
+  ).join('') +
+  `<div class="recent-divider"></div>` +
+  `<button class="recent-item recent-clear" onclick="_clearRecent()">Clear list</button>`;
+}
+
+function toggleRecentFiles(ev) {
+  if (ev) ev.stopPropagation();
+  const menu = document.getElementById('recent-menu');
+  if (!menu) return;
+  const open = menu.style.display !== 'none';
+  menu.style.display = open ? 'none' : '';
+  if (!open) {
+    setTimeout(() => document.addEventListener('click', _closeRecentOnce, { once: true }), 0);
+  }
+}
+function _closeRecentOnce() {
+  const menu = document.getElementById('recent-menu');
+  if (menu) menu.style.display = 'none';
+}
+function _pickRecent(name) {
+  _closeRecentOnce();
+  showToast(`Pick "${name}" in the Upload dialog — browsers don't expose file paths for security.`, 'info', 5000);
+  document.getElementById('upload-input')?.click();
+}
+function _clearRecent() {
+  localStorage.removeItem(_RECENT_KEY);
+  _renderRecentFiles();
+  _closeRecentOnce();
+}
+window.addEventListener('load', _renderRecentFiles);
+
 async function doUpload(file) {
-  showLoading('Uploading & processing slides...');
   const form = new FormData();
   form.append('file', file);
+
+  // PDF only: optional page-range picker, e.g. "1-10,15,20-25"
+  // Skip the prompt if user holds Shift while clicking (advanced users
+  // who already know they want the whole deck).
+  const isPdf = (file.name || '').toLowerCase().endsWith('.pdf');
+  if (isPdf && !window._suppressPageRangePrompt) {
+    const last = localStorage.getItem('upload:lastPageRange') || '';
+    const pages = prompt(
+      `PDF page range to render (optional).\n` +
+      `Leave blank to render the whole deck.\n` +
+      `Examples:  1-10    1,3,5    1-10,20,30-40`,
+      last
+    );
+    if (pages === null) return;                 // user cancelled
+    const trimmed = pages.trim();
+    if (trimmed) {
+      form.append('pages', trimmed);
+      localStorage.setItem('upload:lastPageRange', trimmed);
+    }
+  }
+
+  showLoading('Uploading & processing slides...');
   try {
     const resp = await fetch('/api/upload', { method: 'POST', body: form });
     const data = await resp.json();
     hideLoading();
     if (data.ok) {
+      _recordRecentFile(file.name);
       showToast('Upload complete! Reloading...', 'success');
       setTimeout(() => location.reload(), 800);
     } else {
@@ -3130,12 +3356,34 @@ async function applyWatermark() {
 
 // ── Detect & Remove ─────────────────────────────────────────────────────────
 
+const _WM_KW_KEY = 'slidecraft.wmExtraKeywords';
+
+function _readExtraKeywords() {
+  const el = document.getElementById('wm-extra-keywords');
+  const raw = (el && el.value) || localStorage.getItem(_WM_KW_KEY) || '';
+  return raw.split(',').map(s => s.trim()).filter(Boolean);
+}
+function _persistExtraKeywords() {
+  const el = document.getElementById('wm-extra-keywords');
+  if (el) localStorage.setItem(_WM_KW_KEY, el.value || '');
+}
+function _restoreExtraKeywords() {
+  const el = document.getElementById('wm-extra-keywords');
+  if (el && !el.value) el.value = localStorage.getItem(_WM_KW_KEY) || '';
+}
+
 async function detectWatermarks() {
+  _restoreExtraKeywords();
   const scanBtn = document.getElementById('wm-scan-btn');
   scanBtn.classList.add('loading');
   scanBtn.disabled = true;
   try {
-    const resp = await fetch('/api/detect-watermark/' + currentSlide, { method: 'POST' });
+    const body = JSON.stringify({ extra_keywords: _readExtraKeywords() });
+    const resp = await fetch('/api/detect-watermark/' + currentSlide, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body,
+    });
     const data = await resp.json();
     wmDetectCandidates = data.candidates || [];
     wmSelectedCandidates = new Set(wmDetectCandidates.map((_, i) => i)); // select all by default

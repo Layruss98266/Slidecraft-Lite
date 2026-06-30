@@ -235,7 +235,14 @@
         <span class="act-label">Upload</span>
         <input type="file" accept=".pptx,.pdf" id="upload-input" onchange="uploadPPTX(this)" style="display:none">
       </label>
-      <button class="btn-action bulk-btn" onclick="folderRemoveLogo()" title="Folder: process every PPTX in a local folder">
+      <div class="recent-files-wrap" id="recent-files-wrap" style="display:none">
+        <button class="btn-action recent-toggle" id="recent-toggle" onclick="toggleRecentFiles(event)" title="Recently opened decks">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12,6 12,12 16,14"/></svg>
+          <span class="act-label">Recent</span>
+        </button>
+        <div class="recent-menu" id="recent-menu" style="display:none"></div>
+      </div>
+      <button class="btn-action bulk-btn" onclick="folderRemoveLogo()" title="Folder: process every PPTX or PDF in a local folder">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2V7z"/><path d="M9 13l2 2 4-4"/></svg>
         <span class="act-label">Folder</span>
       </button>
@@ -476,6 +483,15 @@
 
       <span class="toolbar-label">SLIDE</span>
       <div class="tool-group">
+        <button class="tool-btn btn-sm" onclick="detectText()" title="Detect text on current slide (PDF cache first, Tesseract if installed)" id="btn-ocr">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14,2 14,8 20,8"/></svg>
+          OCR
+        </button>
+        <button class="tool-btn btn-sm" onclick="detectTextAll()" title="Detect text on every slide" id="btn-ocr-all">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg>
+          All
+        </button>
+        <button class="tool-btn btn-sm" onclick="clearOCR()" title="Clear OCR overlays" id="btn-clear-ocr" style="display:none">X</button>
         <button class="tool-btn btn-sm" onclick="startCrop()" title="Crop">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6.13 1L6 16a2 2 0 002 2h15"/><path d="M1 6.13L16 6a2 2 0 012 2v15"/></svg>
         </button>
@@ -496,6 +512,9 @@
         </button>
         <button class="tool-btn btn-sm" onclick="openHistoryModal()" title="Version history">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12,6 12,12 16,14"/></svg>
+        </button>
+        <button class="tool-btn btn-sm" onclick="openCompareModal()" title="Before / After compare (current slide)">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="16" rx="2"/><line x1="12" y1="4" x2="12" y2="20"/></svg>
         </button>
         <button class="tool-btn btn-sm" onclick="openTemplatesModal()" title="Templates">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="9" y1="21" x2="9" y2="9"/></svg>
@@ -876,6 +895,33 @@
 
 </div>
 
+<!-- Before/After compare modal -->
+<div class="modal-backdrop" id="compare-modal" onclick="if(event.target===this)closeCompareModal()">
+  <div class="modal-card compare-card">
+    <div class="compare-header">
+      <h3 style="margin:0">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2v20M2 12h20"/></svg>
+        Before / After — Slide <span id="compare-slide-num">1</span>
+      </h3>
+      <button class="wm-close" onclick="closeCompareModal()" aria-label="Close">&times;</button>
+    </div>
+    <div class="compare-body">
+      <div class="compare-frame" id="compare-frame">
+        <img class="compare-img compare-after" id="compare-after" alt="processed">
+        <div class="compare-before-wrap" id="compare-before-wrap">
+          <img class="compare-img compare-before" id="compare-before" alt="original">
+        </div>
+        <div class="compare-handle" id="compare-handle"><div class="compare-handle-line"></div><div class="compare-handle-grip">&#x2194;</div></div>
+        <div class="compare-label compare-label-l">Original</div>
+        <div class="compare-label compare-label-r">Processed</div>
+      </div>
+      <div class="compare-empty" id="compare-empty" style="display:none">
+        No original on file for this slide yet. Run Remove&nbsp;Logo / Edstellar Text Remove / Apply&nbsp;filters first — the slide&apos;s pre-edit copy is staged automatically.
+      </div>
+    </div>
+  </div>
+</div>
+
 <!-- QR Code Modal -->
 <div class="modal-backdrop" id="qr-modal" onclick="if(event.target===this)this.classList.remove('show')">
   <div class="modal-card" style="position:relative">
@@ -1165,6 +1211,12 @@
                 Re-scan
               </button>
               <span class="wm-detect-count" id="wm-detect-count"></span>
+            </div>
+            <div class="wm-keywords-row">
+              <input type="text" id="wm-extra-keywords" class="wm-keywords-input"
+                     placeholder="Extra brand words (comma-separated) — e.g. acme,demo-corp"
+                     oninput="_persistExtraKeywords()" onchange="detectWatermarks()">
+              <button class="btn btn-glass btn-sm" onclick="detectWatermarks()" title="Re-scan with these keywords">Apply</button>
             </div>
 
             <div id="wm-candidates" class="wm-candidates-list"></div>
